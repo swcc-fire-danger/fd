@@ -2187,6 +2187,13 @@ function groupTodo(only) {
   });
   return todo;
 }
+// ArcGIS answers role changes with per-user results; a refused change is not an error by itself
+function roleOk(j, user) {
+  if (Array.isArray(j.results) && !j.results.length) throw new Error("ArcGIS did not change the group role for " + user);
+  const r = (j.results || []).find(x => norm(x.username) === norm(user));
+  if (r && r.success === false) throw new Error((r.error && (r.error.message || r.error.description)) || "ArcGIS did not change the group role for " + user);
+  if ((j.notUpdated || []).length) throw new Error("ArcGIS did not change the group role for " + user);
+}
 async function applyTodo(todo) {
   let done = 0, failed = 0, why = "";
   for (const t of todo) {
@@ -2196,11 +2203,11 @@ async function applyTodo(todo) {
         const j = await arc(`${REST}/community/groups/${id}/addUsers`, {users: user}, true);
         if ((j.notAdded || []).length) throw new Error("ArcGIS did not add " + user + " to the group");
         MEMBERS[t.k]?.set(t.u, {type: "member", user});
-        if (t.mgr) { await arc(`${REST}/community/groups/${id}/updateUsers`, {managers: user}, true); MEMBERS[t.k]?.set(t.u, {type: "admin", user}); }
+        if (t.mgr) { roleOk(await arc(`${REST}/community/groups/${id}/updateUsers`, {admins: user}, true), user); MEMBERS[t.k]?.set(t.u, {type: "admin", user}); }
       } else if (t.act === "demote") {
-        await arc(`${REST}/community/groups/${id}/updateUsers`, {users: user}, true); MEMBERS[t.k]?.set(t.u, {type: "member", user});
+        roleOk(await arc(`${REST}/community/groups/${id}/updateUsers`, {users: user}, true), user); MEMBERS[t.k]?.set(t.u, {type: "member", user});
       } else if (t.act === "promote") {
-        await arc(`${REST}/community/groups/${id}/updateUsers`, {managers: user}, true); MEMBERS[t.k]?.set(t.u, {type: "admin", user});
+        roleOk(await arc(`${REST}/community/groups/${id}/updateUsers`, {admins: user}, true), user); MEMBERS[t.k]?.set(t.u, {type: "admin", user});
       } else {
         await arc(`${REST}/community/groups/${id}/removeUsers`, {users: user}, true); MEMBERS[t.k]?.delete(t.u);
       }
