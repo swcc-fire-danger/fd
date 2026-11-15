@@ -1187,7 +1187,7 @@ function redrawOfficial() {
     d.scrollTop = y;
   }
 }
-// "SW - Zeina Al Zahawy (THSP)" -> "Zeina Al Zahawy"
+// "SW - First Last (ABC)" -> "First Last"
 const cleanName = n => String(n || "").replace(/^[A-Z]{1,5}\s*-\s*/, "").replace(/\s*\([^)]*\)\s*$/, "").trim() || String(n || "");
 function myRoleText() {
   const u = auth.user, gs = grantsOf(u);
