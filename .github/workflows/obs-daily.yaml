@@ -55,5 +55,16 @@ jobs:
         run: |
           gh release upload obs-history data/obs_nfdr_daily_fdra.csv --clobber
 
+      # One download per FDRA with the last year of hourly observations (shown on each FDRA page).
+      # Never stops the daily run if it fails.
+      - name: Build hourly downloads per FDRA
+        continue-on-error: true
+        run: |
+          gh release download obs-history -p history_hourly_nfdr.csv -D data --clobber
+          gh release download obs-history -p history_hourly_weather.csv -D data --clobber
+          python scripts/build_hourly_by_fdra.py
+          gh release view hourly-by-fdra >/dev/null 2>&1 || gh release create hourly-by-fdra --title "Hourly data by FDRA" --notes "One file per FDRA: the last year of hourly observations for its stations. Rebuilt every day."
+          gh release upload hourly-by-fdra data/hourly_by_fdra/*.zip --clobber
+
       - name: Refresh the website
         run: gh workflow run website.yaml

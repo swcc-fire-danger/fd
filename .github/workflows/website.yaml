@@ -40,7 +40,12 @@ jobs:
           gh release download fdra-climo -D data --clobber -p r3_fdra_daily_climo.csv || echo "No FDRA history yet (charts show without Average/Max lines)"
           gh release download fdra-climo -D data --clobber -p r3_fdra_percentile_historical.csv || echo "Using the percentile history in the repository"
           gh release download fdra-climo -D data --clobber -p r3_fdra_percentile_extra.csv || echo "No SFDI/VPD/HDWI percentiles yet (re-run the one-time history workflow)"
-          gh release download fdra-climo -D data --clobber -p history_2005_2024_daily_erc_bi.csv || echo "No 2005-2024 daily history (7-day average percentiles left blank)"
+          # history period files: every period in the release is downloaded; the scripts use the newest (e.g. 2005-2025)
+          gh release download fdra-climo -D data --clobber -p 'history_*_daily_erc_bi.csv' || echo "No daily history (7-day average percentiles left blank)"
+          gh release download fdra-climo -D data --clobber -p 'history_*_daily_weather.csv' || echo "No weather history yet (run 'Weather History (one time)'); Climate Card weather percentiles left blank"
+          # hourly downloads per FDRA (built by the daily run); served from the website itself
+          mkdir -p site/data/hourly
+          gh release download hourly-by-fdra -D site/data/hourly --clobber -p '*.zip' || echo "No hourly FDRA downloads yet (built by the next Obs Daily run)"
 
       - name: Build website data
         run: python scripts/build_web_data.py

@@ -1,0 +1,54 @@
+name: Weather History 2005-2024 (one time)
+
+# Run by hand only. Pulls 2005–2024 daily weather from FEMS for the FDRA stations
+# (Max/Min Temp, Max/Min RH, Max Wind, Max Gust, Solar Rad, Precip) for the FDRA Climate Cards.
+# Run again only when the history period changes (for example 2005-2025), with the new years.
+on:
+  workflow_dispatch:
+    inputs:
+      start_year:
+        description: "First year"
+        default: "2005"
+      end_year:
+        description: "Last year"
+        default: "2024"
+
+permissions:
+  contents: write
+  actions: write
+
+# Same group as the FDRA History run; it only reads from FEMS, so it never holds up the hourly pipeline
+concurrency:
+  group: fdra-climo
+  cancel-in-progress: false
+
+jobs:
+  weather-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONUNBUFFERED: "1"
+      FEMS_USERNAME: ${{ secrets.FEMS_USERNAME }}
+      FEMS_API_KEY: ${{ secrets.FEMS_API_KEY }}
+      CLIMO_START_YEAR: ${{ inputs.start_year }}
+      CLIMO_END_YEAR: ${{ inputs.end_year }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare (private code + Python)
+        uses: ./.github/actions/prepare
+        with:
+          code-key: ${{ secrets.CODE_DEPLOY_KEY }}
+
+      - name: Pull daily weather history
+        run: python scripts/build_weather_history.py
+
+      - name: Save to a release (fdra-climo)
+        run: |
+          gh release view fdra-climo >/dev/null 2>&1 || gh release create fdra-climo --title "FDRA history ${CLIMO_START_YEAR}-${CLIMO_END_YEAR}" --notes "FDRA history files for the website."
+          gh release upload fdra-climo data/history_${CLIMO_START_YEAR}_${CLIMO_END_YEAR}_daily_weather.csv --clobber
+
+      - name: Rebuild the website
+        run: gh workflow run website.yaml
