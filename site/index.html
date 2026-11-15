@@ -1058,7 +1058,7 @@ async function initOfficial() {
 async function queryAll(url, params) {
   const out = []; let offset = 0;
   for (let i = 0; i < 50; i++) {
-    const j = await arc(url + "/query", {...params, resultOffset: offset, resultRecordCount: 2000});
+    const j = await arc(url + "/query", {...params, resultOffset: offset, resultRecordCount: 2000}, true);   // POST: never served from a cache
     out.push(...(j.features || [])); offset += (j.features || []).length;
     if (!j.exceededTransferLimit || !(j.features || []).length) break;
   }
@@ -1136,10 +1136,11 @@ function roleLabel(g) {
   const where = g.base === "Zone Leader" ? " · " + zoneLabel(g.zone) : g.base === "FDRA Leader" ? " · " + (g.fdra || "") : g.base === "Viewer" ? (g.fdra ? " · " + g.fdra : g.zone ? " · " + zoneLabel(g.zone) : " · All zones") : "";
   return (LEVEL_NAME[g.base] || g.base) + where;
 }
+const MY_SAVES = {};      // FDRA key -> rating this browser just saved
 async function loadRatings() {
   if (!SVC.ratingsView) return;
   const V = SVC.ratingsView;
-  const j = await arc(V.url + "/query", {where: `RatingDate='${META.today}'`, outFields: "*", orderByFields: `${V.created} DESC`, returnGeometry: "false"});
+  const j = await arc(V.url + "/query", {where: `RatingDate='${META.today}'`, outFields: "*", orderByFields: `${V.created} DESC`, returnGeometry: "false"}, true);
   const next = {};
   (j.features || []).forEach(ft => {
     const a = ft.attributes, key = String(att(a, "FDRA_ZONE") || "").trim(), f = FDRA[key], who = a[V.creator];
@@ -1147,6 +1148,12 @@ async function loadRatings() {
     const row = coverRow(who, f);
     if (!row) return;                                  // not a leader for this FDRA: ignored
     next[key] = {rating: att(a, "Rating") || null, note: att(a, "Note"), by: cleanName(att(a, "LeaderName") || leaderName(who)), at: a[V.created], role: roleLabel(row)};
+  });
+  // a rating just saved here wins until the table shows it (or 5 minutes pass)
+  Object.entries(MY_SAVES).forEach(([k, m]) => {
+    const srv = next[k];
+    if (Date.now() - m.at > 300000 || (srv && srv.at >= m.at - 60000 && srv.rating === m.rating) || (!m.rating && !srv)) { delete MY_SAVES[k]; return; }
+    next[k] = m.rating ? {...m.row} : {rating: null};
   });
   Object.keys(next).forEach(k => { if (!classByName(next[k].rating)) delete next[k]; });   // "Use FEMS rating" clears it
   ratings = next;
@@ -2101,6 +2108,7 @@ $("#editForm").addEventListener("submit", async e => {
     if (!res?.success) throw new Error(res?.error?.description || "The rating was not saved");
     // show it right away, then confirm from the table
     ratings[f.key] = editPick ? {rating: editPick, note: attrs.Note, by: cleanName(auth.name), at: Date.now(), role: roleLabel(row)} : undefined;
+    MY_SAVES[f.key] = {rating: editPick, at: Date.now(), row: ratings[f.key]};
     if (!editPick) delete ratings[f.key];
     $("#editDlg").close();
     redrawOfficial();
@@ -2165,6 +2173,7 @@ function groupTodo(only) {
   if (!MEMBERS) return todo;
   const users = only ? [norm(only)] : [...new Set([...ACCESS.keys(), ...HISTORY.filter(h => h.ok).map(h => norm(h.user))])];
   users.forEach(u => {
+    if (isRoot(u)) return;          // the site owner's group membership is never changed by this page
     const want = wantGroups(u), lost = lostGroups(u);
     Object.keys(GRP()).forEach(k => {
       const m = MEMBERS[k]; if (!m) return;
@@ -2266,6 +2275,8 @@ function accFiltered() {
   let people = [...ACCESS.values()].filter(canSee);
   // admins also see viewers who were added straight in ArcGIS (not through this page)
   if (isAdminU(ME()) && MEMBERS?.pilot) MEMBERS.pilot.forEach((m, u) => { if (!ACCESS.has(u)) people.push({user: m.user || u, name: m.name, grants: new Map(), arcgisOnly: true}); });
+  // the owner is always listed, even with no access rows
+  if (OFF.owner && (isAdminU(ME()) || isRoot(ME())) && !people.some(p => isRoot(p.user))) people.push({user: OFF.owner, name: leaderName(OFF.owner), grants: new Map(), ownerOnly: true});
   return people.filter(p => {
     const gs = [...p.grants.values()];
     if (q && !(norm(p.name).includes(q) || norm(p.user).includes(q))) return false;
@@ -2273,6 +2284,7 @@ function accFiltered() {
     if (fm && !personIsMgr(p)) return false;
     if (ff && !gs.some(g => g.base === "All Zones" || (g.base === "Zone Leader" && norm(g.zone) === norm(FDRA[ff]?.zone)) || norm(g.fdra) === norm(ff) || (g.base === "Viewer" && !g.fdra && norm(g.zone) === norm(FDRA[ff]?.zone)))) return false;
     if (fz && !gs.some(g => g.base === "All Zones" || g.base === "Admin" || norm(g.zone) === norm(fz))) return false;
+    if ((fr || ff || fz) && p.ownerOnly) return false;
     if ((fr || fm || ff || fz) && p.arcgisOnly) return false;
     return true;
   }).sort((a, b) => String(a.name).localeCompare(String(b.name)));
@@ -2297,7 +2309,7 @@ function accRender() {
     const anyRm = gs.some(g => mayChange(ME(), g, true));
     return `<div class="acc-p"><div class="who"><b>${esc(cleanName(p.name))}</b><small>${esc(p.user)}</small></div>
       <div class="chips">${isRoot(p.user) ? `<span class="acc-chip adm ro">Owner<span class="m">Manager</span></span>` : ""}${gs.map(chipHtml).join("") || (isRoot(p.user) ? "" : `<span class="acc-chip view ro">Viewer · added in ArcGIS</span>`)}</div>
-      <div class="acts"><button class="acc-sm" data-accaddto="${esc(p.user)}" data-accname="${esc(p.name)}">+ Access</button>${anyRm ? `<button class="acc-sm danger" data-accrmall="${esc(p.user)}">Remove</button>` : p.arcgisOnly && isAdminU(ME()) ? `<button class="acc-sm danger" data-accrmviewer="${esc(p.user)}" data-accname="${esc(p.name)}">Remove</button>` : ""}</div></div>`;
+      <div class="acts"><button class="acc-sm" data-accaddto="${esc(p.user)}" data-accname="${esc(p.name)}">+ Access</button>${anyRm ? `<button class="acc-sm danger" data-accrmall="${esc(p.user)}">Remove</button>` : p.arcgisOnly && isAdminU(ME()) && !isRoot(p.user) ? `<button class="acc-sm danger" data-accrmviewer="${esc(p.user)}" data-accname="${esc(p.name)}">Remove</button>` : ""}</div></div>`;
   }).join("") || `<div class="acc-empty">No one matches these filters.</div>`;
   $("#accPager").innerHTML = pages > 1 ? `<button class="acc-sm" data-accpage="${accPage - 1}" ${accPage === 1 ? "disabled" : ""}>‹ Previous</button><span>Page ${accPage} of ${pages}</span><button class="acc-sm" data-accpage="${accPage + 1}" ${accPage === pages ? "disabled" : ""}>Next ›</button>` : "";
 }
