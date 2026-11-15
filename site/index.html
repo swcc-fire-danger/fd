@@ -612,6 +612,19 @@ nav.zones{background:var(--bar-bg);border-bottom:0}
 .ztab .chev{color:var(--bar-ink-2)}
 .ztab .dot{border-color:rgba(255,255,255,.55)}
 .ztab.ov{padding-top:12px;padding-bottom:12px}
+/* the zone bar stays one row on any screen: tabs share the width; on laptops the "N FDRAs" line is dropped;
+   on small screens the bar slides sideways with arrow buttons */
+nav.zones{position:relative}
+.zones .wrap{flex-wrap:nowrap;scroll-behavior:smooth}
+.ztab{flex:1 0 auto;justify-content:center;gap:7px;padding-left:clamp(8px,.9vw,18px);padding-right:clamp(8px,.9vw,18px);white-space:nowrap}
+.ztab .tl small{max-width:none}
+@media (max-width:1899px){.ztab .tl small{display:none}.ztab{padding-top:15px;padding-bottom:15px;gap:6px;padding-left:10px;padding-right:10px}.ztab.ov{padding-top:15px;padding-bottom:15px}}
+@media (max-width:1199px){.ztab,.ztab.ov{padding-left:8px;padding-right:8px;gap:5px}}
+.zscroll{position:absolute;top:0;bottom:0;z-index:5;width:34px;border:0;padding:0;display:grid;place-items:center;cursor:pointer;color:#fff;font-size:22px;line-height:1}
+.zscroll[hidden]{display:none}
+.zscroll.l{left:0;background:linear-gradient(90deg,var(--bar-bg) 55%,transparent)}
+.zscroll.r{right:0;background:linear-gradient(270deg,var(--bar-bg) 55%,transparent)}
+.zscroll:hover{color:#f2b33d}
 .zmenu{padding:0 6px 6px;overflow:hidden}
 .zmenu .mhead{margin:0 -6px 6px;padding:10px 14px;border-bottom:1px solid var(--line);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
 .zmenu .mhead b{font-size:14px;letter-spacing:0;text-transform:none;color:var(--ink);margin-right:2px}
@@ -697,7 +710,9 @@ footer.site-foot{margin-top:40px;background:var(--hdr-bg);border-top:4px solid #
 </header>
 
 <nav class="zones" aria-label="Zones">
+  <button class="zscroll l" id="zLeft" type="button" aria-label="Show earlier zones" hidden>‹</button>
   <div class="wrap" role="tablist" id="zoneTabs"></div>
+  <button class="zscroll r" id="zRight" type="button" aria-label="Show more zones" hidden>›</button>
 </nav>
 </div>
 
@@ -1389,6 +1404,22 @@ function positionMenu() {
   m.style.minWidth = Math.max(260, r.width) + "px";
   m.style.left = Math.max(0, Math.min(r.left + window.scrollX, window.innerWidth - m.offsetWidth)) + "px";
 }
+// arrow buttons appear only when the zone bar is wider than the screen
+function zoneArrows() {
+  const w = $("#zoneTabs"); if (!w) return;
+  const more = w.scrollWidth - w.clientWidth > 2;
+  $("#zLeft").hidden = !more || w.scrollLeft < 4;
+  $("#zRight").hidden = !more || w.scrollLeft > w.scrollWidth - w.clientWidth - 4;
+}
+(function initZoneArrows() {
+  const w = $("#zoneTabs");
+  $("#zLeft").addEventListener("click", () => w.scrollBy({left: -w.clientWidth * .6}));
+  $("#zRight").addEventListener("click", () => w.scrollBy({left: w.clientWidth * .6}));
+  w.addEventListener("scroll", () => { zoneArrows(); closeZoneMenu(); }, {passive: true});
+  window.addEventListener("resize", zoneArrows);
+  new MutationObserver(zoneArrows).observe(w, {childList: true});
+  setTimeout(zoneArrows, 0);
+})();
 function closeZoneMenu() {
   const m = $("#zoneMenu"); m.classList.remove("show"); m.dataset.zone = "";
   document.querySelectorAll(".ztab[aria-expanded]").forEach(b => b.setAttribute("aria-expanded", "false"));
