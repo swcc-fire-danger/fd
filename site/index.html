@@ -397,6 +397,10 @@ dialog.acc-dlg[open]{display:flex}
 .acc-df #accSummary{margin-right:auto;font-size:12.5px;color:var(--ink-2)}
 .acc-step{display:flex;gap:12px;padding:12px 0;border-top:1px solid var(--line)}
 .acc-step:first-child{border-top:0}
+#accDlg.acc-blocked .acc-step:not(:first-child){display:none!important}
+.acc-has{margin-top:10px;padding:10px 12px;border-radius:8px;background:#fff6dd;border:1px solid #e9c46a;color:#3a2c00;font-size:13px;line-height:1.45}
+.acc-has .acc-chip{margin:3px 4px 0 0}
+.acc-has button{margin-top:8px}
 .acc-step .n{flex:none;width:24px;height:24px;border-radius:50%;background:var(--accent);color:var(--accent-ink);font-size:12.5px;font-weight:700;display:grid;place-items:center}
 .acc-sc{flex:1;min-width:0}
 .acc-sc h4{margin:2px 0 10px;font-size:14px}
@@ -727,6 +731,7 @@ footer.site-foot{margin-top:40px;background:var(--hdr-bg);border-top:4px solid #
       <h4>Person</h4>
       <div id="accWho"><div class="acc-row"><input id="accPQ" type="search" placeholder="Search by name or ArcGIS username" autocomplete="off"><button class="btn" id="accFind" type="button">Search</button></div><div class="acc-res" id="accRes"></div></div>
       <div class="acc-chosen" id="accChosen" hidden></div>
+      <div class="acc-has" id="accHas" hidden></div>
     </div></div>
     <div class="acc-step"><span class="n">2</span><div class="acc-sc">
       <h4>Rating access</h4>
@@ -2316,7 +2321,7 @@ function accPaintFdraFilter() {
 }
 function chipHtml(g) {
   const cls = g.base === "Admin" ? "adm" : g.base === "Viewer" ? "view" : "ldr";
-  const can = mayChange(ME(), g, true) && !isRoot(g.user);
+  const can = false;   // access is changed with Edit current access or Remove, not from the chips
   const k = encodeURIComponent(JSON.stringify([g.user, g.base, g.zone || "", g.fdra || ""]));
   return `<span class="acc-chip ${cls}${can ? "" : " ro"}" title="Added by ${esc(leaderName(g.by))}${g.at ? " · " + esc(new Date(g.at).toLocaleDateString("en-US")) : ""}">${esc(roleLabel(g))}${g.manager && g.base !== "Admin" ? `<span class="m">Manager</span>` : ""}${can ? `<button type="button" title="Remove this access" data-accrm="${k}">×</button>` : ""}</span>`;
 }
@@ -2406,7 +2411,7 @@ function accOpenForm(person, edit) {
   accForm = {person: person || null, level: null, manager: false, admin: "", edit: !!edit};
   if (edit) { const c = accCurrentForm(person.user); Object.assign(accForm, {level: c.level, manager: c.manager, admin: c.admin, initZone: c.zone, initFdras: c.fdras, was: c}); }
   $("#accDlgTitle").textContent = edit ? `Edit current access for ${cleanName(person.name)}` : person ? `Add access for ${person.name}` : "Add a person";
-  $("#accSave").textContent = edit ? "Save changes" : "Save";
+  $("#accSave").textContent = edit ? "Save changes" : "Save"; $("#accSave").disabled = false;
   if (edit) $("#accFdras").innerHTML = "";
   $("#accPQ").value = ""; $("#accRes").innerHTML = "";
   accPaintForm(); $("#accDlg").showModal();
@@ -2421,7 +2426,19 @@ function accPaintForm() {
   if (F.level == null || !choices.some(c => c[0] === F.level)) F.level = F.edit && F.level === "" ? "" : choices[0] ? choices[0][0] : "";
   // 1 person
   $("#accWho").hidden = !!F.person; $("#accChosen").hidden = !F.person;
-  if (F.person) $("#accChosen").innerHTML = `<span><b>${esc(F.person.name)}</b> <small>${esc(F.person.user)}</small></span><button class="acc-sm" type="button" id="accChange">Change</button>`;
+  if (F.person) $("#accChosen").innerHTML = `<span><b>${esc(F.person.name)}</b> <small>${esc(F.person.user)}</small></span>${F.edit ? "" : `<button class="acc-sm" type="button" id="accChange">Change</button>`}`;
+  // adding someone who already has access: point to Edit current access instead of adding a second set
+  const has = F.person && !F.edit ? grantsOf(F.person.user) : [];
+  const ownerLocked = !!(F.person && !F.edit && isRoot(F.person.user) && !isRoot(ME()));
+  const canEdit = !!(has.length && (isRoot(F.person.user) ? isRoot(ME()) : has.every(g => mayChange(ME(), g, true))));
+  F.blocked = ownerLocked || canEdit;
+  const chips = has.map(g => `<span class="acc-chip ${g.base === "Admin" ? "adm" : g.base === "Viewer" ? "view" : "ldr"} ro">${esc(roleLabel(g))}${g.manager && g.base !== "Admin" ? `<span class="m">Manager</span>` : ""}</span>`).join("");
+  $("#accHas").hidden = !(ownerLocked || has.length);
+  $("#accHas").innerHTML = ownerLocked ? "<b>This is the site owner.</b> Only the owner can change this access."
+    : canEdit ? `<b>${esc(cleanName(F.person.name))} already has access:</b><div>${chips}</div><button class="btn primary" type="button" data-accswitch="1">Edit current access</button>`
+    : has.length ? `<b>Already has access:</b><div>${chips}</div>Anything you save here is added to it.` : "";
+  $("#accDlg").classList.toggle("acc-blocked", F.blocked);
+  $("#accSave").disabled = F.blocked;
   // 2 rating access + where
   $("#accLevels").innerHTML = choices.map(([b, t, d]) => `<button type="button" role="radio" aria-checked="${F.level === b}" data-acclevel="${b || "none"}"><b>${t}</b><span>${d}</span></button>`).join("");
   const needZone = ["Zone Leader", "FDRA Leader", "Viewer"].includes(F.level), needFdra = F.level === "FDRA Leader" || F.level === "Viewer";
@@ -2455,7 +2472,7 @@ function accPaintForm() {
   // step numbers follow what is shown
   let n = 2;
   [["#accMgrStep", leader], ["#accAdmStep", isAdm]].forEach(([id, on]) => { if (on) $(id + " .n").textContent = ++n; });
-  $("#accSummary").textContent = !F.person ? "Choose a person to continue." : !F.level && !F.admin ? "Choose rating access or admin access." : "";
+  $("#accSummary").textContent = F.blocked ? "" : !F.person ? "Choose a person to continue." : !F.level && !F.admin ? "Choose rating access or admin access." : "";
 }
 async function accSearch() {
   const t = $("#accPQ").value.trim(); if (!t) return;
@@ -2463,7 +2480,7 @@ async function accSearch() {
   let users = [];
   try { const j = await arc(`${REST}/community/users`, {q: t, num: 20, sortField: "fullname"}); users = (j.results || []).filter(u => !auth.orgId || !u.orgId || u.orgId === auth.orgId); } catch (e) {}
   $("#accRes").innerHTML = users.length
-    ? users.map(u => `<button type="button" data-accuser="${esc(u.username)}" data-accname="${esc(u.fullName || u.username)}">${esc(u.fullName || u.username)}<small>${esc(u.username)}</small></button>`).join("")
+    ? users.map(u => `<button type="button" data-accuser="${esc(u.username)}" data-accname="${esc(u.fullName || u.username)}">${esc(u.fullName || u.username)}<small>${esc(u.username)}${grantsOf(u.username).length || isRoot(u.username) ? " · has access" : ""}</small></button>`).join("")
     : `<div class="muted">No one found. Check the spelling, or use their exact ArcGIS username.</div><button type="button" data-accuser="${esc(t)}" data-accname="${esc(t)}">Use username: ${esc(t)}</button>`;
 }
 async function accWrite(rows) {
@@ -2482,6 +2499,7 @@ async function accAfterChange(user, msg, edited) {
 async function accSave() {
   const F = accForm;
   if (!F.person) return toast("Choose a person first.");
+  if (F.blocked) return;
   if (!F.level && !F.admin) return toast("Choose rating access or admin access.");
   const z = $("#accZone").value || null, keys = [...$("#accFdras").querySelectorAll("input:checked")].map(i => i.value);
   const who = {Username: F.person.user, LeaderName: F.person.name};
@@ -2566,6 +2584,7 @@ $("#accDlg").addEventListener("click", e => {
   else if (d.accmgr) { accForm.manager = d.accmgr === "1"; accPaintForm(); }
   else if (d.accuser) { accForm.person = {user: d.accuser, name: d.accname}; accPaintForm(); }
   else if (b.id === "accChange") { accForm.person = null; accPaintForm(); $("#accPQ").focus(); }
+  else if (d.accswitch) accOpenForm(accForm.person, true);
 });
 $("#accessPage").addEventListener("click", async e => {
   const b = e.target.closest("button"); if (!b) return;
