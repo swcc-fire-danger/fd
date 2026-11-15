@@ -2168,7 +2168,7 @@ function lostGroups(u) {
   Object.keys(w).forEach(k => out.delete(k));
   return out;
 }
-function groupTodo(only) {
+function groupTodo(only, edited) {
   const todo = [];
   if (!MEMBERS) return todo;
   const users = only ? [norm(only)] : [...new Set([...ACCESS.keys(), ...HISTORY.filter(h => h.ok).map(h => norm(h.user))])];
@@ -2181,7 +2181,7 @@ function groupTodo(only) {
       if (cur === "owner") return;
       if (w && !cur) todo.push({u, k, act: "add", mgr: w === "admin"});
       else if (w === "admin" && cur === "member") todo.push({u, k, act: "promote"});
-      else if (w === "member" && cur === "admin" && HISTORY.some(h => h.ok && h.removed && norm(h.user) === u)) todo.push({u, k, act: "demote"});
+      else if (w === "member" && cur === "admin" && (edited || HISTORY.some(h => h.ok && h.removed && norm(h.user) === u))) todo.push({u, k, act: "demote"});
       else if (!w && cur && lost.has(k)) todo.push({u, k, act: "remove"});
     });
   });
@@ -2316,7 +2316,9 @@ function accRender() {
     const anyRm = gs.some(g => mayChange(ME(), g, true));
     return `<div class="acc-p"><div class="who"><b>${esc(cleanName(p.name))}</b><small>${esc(p.user)}</small></div>
       <div class="chips">${isRoot(p.user) ? `<span class="acc-chip adm ro">Owner<span class="m">Manager</span></span>` : ""}${gs.map(chipHtml).join("") || (isRoot(p.user) ? "" : `<span class="acc-chip view ro">Viewer · added in ArcGIS</span>`)}</div>
-      <div class="acts"><button class="acc-sm" data-accaddto="${esc(p.user)}" data-accname="${esc(p.name)}">+ Access</button>${anyRm ? `<button class="acc-sm danger" data-accrmall="${esc(p.user)}">Remove</button>` : p.arcgisOnly && isAdminU(ME()) && !isRoot(p.user) ? `<button class="acc-sm danger" data-accrmviewer="${esc(p.user)}" data-accname="${esc(p.name)}">Remove</button>` : ""}</div></div>`;
+      <div class="acts">${gs.length && !isRoot(p.user) && gs.every(g => mayChange(ME(), g, true))
+        ? `<button class="acc-sm" data-accedit="${esc(p.user)}" data-accname="${esc(p.name)}">Edit current access</button>`
+        : `<button class="acc-sm" data-accaddto="${esc(p.user)}" data-accname="${esc(p.name)}">+ Access</button>`}${anyRm ? `<button class="acc-sm danger" data-accrmall="${esc(p.user)}">Remove</button>` : p.arcgisOnly && isAdminU(ME()) && !isRoot(p.user) ? `<button class="acc-sm danger" data-accrmviewer="${esc(p.user)}" data-accname="${esc(p.name)}">Remove</button>` : ""}</div></div>`;
   }).join("") || `<div class="acc-empty">No one matches these filters.</div>`;
   $("#accPager").innerHTML = pages > 1 ? `<button class="acc-sm" data-accpage="${accPage - 1}" ${accPage === 1 ? "disabled" : ""}>‹ Previous</button><span>Page ${accPage} of ${pages}</span><button class="acc-sm" data-accpage="${accPage + 1}" ${accPage === pages ? "disabled" : ""}>Next ›</button>` : "";
 }
@@ -2336,9 +2338,25 @@ const RATING = [
   ["All Zones", "All Zones Leader", "Sets the official rating for every FDRA in the Southwest."],
   ["", "No rating access", "Administration only."]
 ];
-function accOpenForm(person) {
-  accForm = {person: person || null, level: null, manager: false, admin: ""};
-  $("#accDlgTitle").textContent = person ? `Add access for ${person.name}` : "Add a person";
+// the person's current access, in the form's terms
+function accCurrentForm(user) {
+  const gs = grantsOf(user), order = ["All Zones", "Zone Leader", "FDRA Leader", "Viewer"];
+  const level = order.find(b => gs.some(g => g.base === b)) || "";
+  const mine = gs.filter(g => g.base === level), adm = gs.find(g => g.base === "Admin");
+  let zone = "", fdras = [];
+  if (level === "Zone Leader") zone = mine[0].zone || "";
+  if (level === "FDRA Leader" || level === "Viewer") {
+    zone = (mine.find(g => g.fdra) ? FDRA[mine.find(g => g.fdra).fdra]?.zone : mine[0].zone) || "";
+    fdras = mine.filter(g => g.fdra && norm(FDRA[g.fdra]?.zone) === norm(zone)).map(g => g.fdra);
+  }
+  return {level, manager: mine.some(g => g.manager), admin: adm ? (adm.manager ? "manager" : "member") : "", zone, fdras};
+}
+function accOpenForm(person, edit) {
+  accForm = {person: person || null, level: null, manager: false, admin: "", edit: !!edit};
+  if (edit) { const c = accCurrentForm(person.user); Object.assign(accForm, {level: c.level, manager: c.manager, admin: c.admin, initZone: c.zone, initFdras: c.fdras, was: c}); }
+  $("#accDlgTitle").textContent = edit ? `Edit current access for ${cleanName(person.name)}` : person ? `Add access for ${person.name}` : "Add a person";
+  $("#accSave").textContent = edit ? "Save changes" : "Save";
+  if (edit) $("#accFdras").innerHTML = "";
   $("#accPQ").value = ""; $("#accRes").innerHTML = "";
   accPaintForm(); $("#accDlg").showModal();
   if (!person) setTimeout(() => $("#accPQ").focus(), 30);
@@ -2349,7 +2367,7 @@ function accRatingChoices() {
 }
 function accPaintForm() {
   const F = accForm, choices = accRatingChoices(), isAdm = isAdminU(ME()), isAdmMgr = isAdminMgr(ME());
-  if (F.level == null || !choices.some(c => c[0] === F.level)) F.level = choices[0] ? choices[0][0] : "";
+  if (F.level == null || !choices.some(c => c[0] === F.level)) F.level = F.edit && F.level === "" ? "" : choices[0] ? choices[0][0] : "";
   // 1 person
   $("#accWho").hidden = !!F.person; $("#accChosen").hidden = !F.person;
   if (F.person) $("#accChosen").innerHTML = `<span><b>${esc(F.person.name)}</b> <small>${esc(F.person.user)}</small></span><button class="acc-sm" type="button" id="accChange">Change</button>`;
@@ -2359,16 +2377,17 @@ function accPaintForm() {
   $("#accWhere").hidden = !needZone;
   const allZ = ZONES().filter(z => BY_ZONE[z]);
   const zones = F.level === "Zone Leader" || isAdm || leadsAll(ME()) ? allZ : [...new Set([...myZones(), ...myFdras().map(k => FDRA[k].zone)])];
-  const zSel = $("#accZone"), keep = zSel.value;
+  const zSel = $("#accZone"), keep = F.initZone !== undefined ? F.initZone : zSel.value;
   zSel.innerHTML = (F.level === "Viewer" && leadsAll(ME()) ? `<option value="">All zones</option>` : "") + zones.map(z => `<option value="${esc(z)}">${esc(zoneLabel(z))}</option>`).join("");
   if ([...zSel.options].some(o => o.value === keep)) zSel.value = keep;
   $("#accZoneLbl").textContent = F.level === "Viewer" ? "Their zone (for filtering)" : "Zone";
   $("#accFdraWrap").hidden = !needFdra || (F.level === "Viewer" && !zSel.value);
   $("#accFdraLbl").textContent = F.level === "Viewer" ? "Their FDRAs (optional)" : "FDRAs they rate";
   if (needFdra) {
-    const z = zSel.value, was = new Set([...$("#accFdras").querySelectorAll("input:checked")].map(i => i.value));
+    const z = zSel.value, was = new Set(F.initFdras || [...$("#accFdras").querySelectorAll("input:checked")].map(i => i.value));
     $("#accFdras").innerHTML = (BY_ZONE[z] || []).filter(f => leadsFdra(ME(), f.key)).map(f => `<label><input type="checkbox" value="${esc(f.key)}"${was.has(f.key) ? " checked" : ""}> ${esc(f.name)}</label>`).join("");
   }
+  delete F.initZone; delete F.initFdras;
   // 3 role for that rating access (leaders only)
   const leader = LEADER_LEVELS.includes(F.level), canMgr = isMgr(ME());
   if (!canMgr) F.manager = false;
@@ -2400,11 +2419,11 @@ async function accWrite(rows) {
   const j = await arc(SVC.leaders.url + "/addFeatures", {features: JSON.stringify(rows.map(a => ({attributes: {GACC: OFF.gacc || "SWCC", ...a}})))}, true);
   if ((j.addResults || []).some(r => !r.success)) throw new Error("The change was not saved");
 }
-async function accAfterChange(user, msg) {
+async function accAfterChange(user, msg, edited) {
   await loadLeaders();
   if (MEMBERS || isMgr(ME()) || isAdminU(ME())) {
     if (!MEMBERS) await loadMembers();
-    const r = await applyTodo(groupTodo(user));
+    const r = await applyTodo(groupTodo(user, edited));
     if (r.failed) { toast(`${msg} · ${r.failed} group change${r.failed === 1 ? "" : "s"} could not be made${r.why ? ": " + r.why : ""}`); accRender(); await loadRatings(); renderAll(); mapApi?.refresh(); return; }
   }
   toast(msg); accRender(); await loadRatings(); renderAll(); mapApi?.refresh();
@@ -2426,15 +2445,42 @@ async function accSave() {
     } else rows = keys.length ? keys.map(k => ({...base, Zone: FDRA[k].zone, FDRA: FDRA[k].name, FDRA_ZONE: k})) : [{...base, Zone: z, FDRA: null, FDRA_ZONE: null}];
   }
   if (F.admin) rows.push({...who, Role: roleText("Admin", F.admin === "manager", false), Zone: null, FDRA: null, FDRA_ZONE: null});
+  let what = [F.level ? LEVEL_NAME[F.level] : "", F.admin ? (F.admin === "manager" ? "Admin manager" : "Admin member") : ""].filter(Boolean).join(" and ") + " added.";
+  if (F.edit) {
+    const r = accEditRows(F, rows, z);
+    if (!r.rows.length) return toast("No changes to save.");
+    rows = r.rows; what = "access updated" + (r.changes.length ? " (" + r.changes.join("; ") + ")" : "") + ".";
+  }
   // check every change against this person's own access before saving
-  if (rows.some(r => { const p = parseRole(r.Role); return !mayChange(ME(), {base: p.base, manager: p.manager, zone: r.Zone, fdra: r.FDRA_ZONE}, false); })) return toast("You can't give that access.");
+  if (rows.some(r => { const p = parseRole(r.Role); return !mayChange(ME(), {base: p.base, manager: p.manager, zone: r.Zone, fdra: r.FDRA_ZONE}, p.removed); })) return toast("You can't give that access.");
   $("#accSave").disabled = true;
   try {
     await accWrite(rows); $("#accDlg").close();
-    const what = [F.level ? LEVEL_NAME[F.level] : "", F.admin ? (F.admin === "manager" ? "Admin manager" : "Admin member") : ""].filter(Boolean).join(" and ");
-    await accAfterChange(F.person.user, `${F.person.name}: ${what} added.`);
+    await accAfterChange(F.person.user, `${cleanName(F.person.name)}: ${what}`, F.edit);
   } catch (e) { toast("Unable to save: " + e.message); }
   finally { $("#accSave").disabled = false; }
+}
+// rows that turn the person's current access into what the form shows
+function accEditRows(F, want, zone) {
+  const user = F.person.user, cur = grantsOf(user), out = [], changes = [];
+  const wantG = want.map(r => { const p = parseRole(r.Role); return {base: p.base, manager: p.manager, zone: r.Zone, fdra: r.FDRA_ZONE, row: r}; });
+  const wantKeys = new Set(wantG.map(scopeKey));
+  // add what is new or changed (Member <-> Manager)
+  wantG.forEach(g => {
+    const c = cur.find(x => scopeKey(x) === scopeKey(g));
+    if (c && !!c.manager === !!g.manager) return;
+    out.push(g.row);
+    changes.push(c ? `${g.base === "Admin" ? "Admin" : roleLabel(g)}: ${c.manager ? "Manager" : "Member"} → ${g.manager ? "Manager" : "Member"}` : `added ${roleLabel(g)}${g.manager && g.base !== "Admin" ? " (Manager)" : ""}`);
+  });
+  // remove what was unselected; FDRAs in other zones than the one shown stay as they are
+  cur.forEach(c => {
+    if (wantKeys.has(scopeKey(c))) return;
+    const otherZone = c.base === F.level && (c.base === "FDRA Leader" || c.base === "Viewer") && norm(c.fdra ? FDRA[c.fdra]?.zone : c.zone) !== norm(zone || "");
+    if (otherZone || !mayChange(ME(), c, true)) return;
+    out.push({Username: user, LeaderName: F.person.name, Role: roleText(c.base, false, true), Zone: c.zone || null, FDRA: c.fdra ? FDRA[c.fdra]?.name || null : null, FDRA_ZONE: c.fdra || null});
+    changes.push(`removed ${roleLabel(c)}`);
+  });
+  return {rows: out, changes};
 }
 async function accRemove(grants, label) {
   const rows = grants.filter(g => mayChange(ME(), g, true)).map(g => ({Username: g.user, LeaderName: g.name || leaderName(g.user), Role: roleText(g.base, false, true),
@@ -2476,6 +2522,7 @@ $("#accessPage").addEventListener("click", async e => {
   if (d.acctab) { accTab = d.acctab; accRender(); }
   else if (d.accpage) { accPage = +d.accpage; accRender(); window.scrollTo(0, $("#accessPage").offsetTop); }
   else if (d.accaddto) accOpenForm({user: d.accaddto, name: d.accname});
+  else if (d.accedit) accOpenForm({user: d.accedit, name: d.accname}, true);
   else if (b.id === "accApply") { b.disabled = true; const r = await applyTodo(groupTodo()); toast(`${r.done} group change${r.done === 1 ? "" : "s"} applied${r.failed ? `, ${r.failed} could not be applied: ${r.why}` : ""}.`); accRender(); }
   else if (d.accrm) {
     const [u, base, zone, fdra] = JSON.parse(decodeURIComponent(d.accrm));
