@@ -2188,13 +2188,13 @@ function groupTodo(only) {
   return todo;
 }
 async function applyTodo(todo) {
-  let done = 0, failed = 0;
+  let done = 0, failed = 0, why = "";
   for (const t of todo) {
     const id = GRP()[t.k], user = (ACCESS.get(t.u) || {}).user || t.u;
     try {
       if (t.act === "add") {
         const j = await arc(`${REST}/community/groups/${id}/addUsers`, {users: user}, true);
-        if ((j.notAdded || []).length) throw new Error("not added");
+        if ((j.notAdded || []).length) throw new Error("ArcGIS did not add " + user + " to the group");
         MEMBERS[t.k]?.set(t.u, {type: "member", user});
         if (t.mgr) { await arc(`${REST}/community/groups/${id}/updateUsers`, {managers: user}, true); MEMBERS[t.k]?.set(t.u, {type: "admin", user}); }
       } else if (t.act === "demote") {
@@ -2205,9 +2205,9 @@ async function applyTodo(todo) {
         await arc(`${REST}/community/groups/${id}/removeUsers`, {users: user}, true); MEMBERS[t.k]?.delete(t.u);
       }
       done++;
-    } catch (e) { failed++; }
+    } catch (e) { failed++; why = why || e.message; }
   }
-  return {done, failed};
+  return {done, failed, why};
 }
 function accPaintPending() {
   const el = $("#accPending");
@@ -2398,6 +2398,7 @@ async function accAfterChange(user, msg) {
   if (MEMBERS || isMgr(ME()) || isAdminU(ME())) {
     if (!MEMBERS) await loadMembers();
     const r = await applyTodo(groupTodo(user));
+    if (r.failed) { toast(`${msg} · ${r.failed} group change${r.failed === 1 ? "" : "s"} could not be made${r.why ? ": " + r.why : ""}`); accRender(); await loadRatings(); renderAll(); mapApi?.refresh(); return; }
   }
   toast(msg); accRender(); await loadRatings(); renderAll(); mapApi?.refresh();
 }
@@ -2468,7 +2469,7 @@ $("#accessPage").addEventListener("click", async e => {
   if (d.acctab) { accTab = d.acctab; accRender(); }
   else if (d.accpage) { accPage = +d.accpage; accRender(); window.scrollTo(0, $("#accessPage").offsetTop); }
   else if (d.accaddto) accOpenForm({user: d.accaddto, name: d.accname});
-  else if (b.id === "accApply") { b.disabled = true; const r = await applyTodo(groupTodo()); toast(`${r.done} group change${r.done === 1 ? "" : "s"} applied${r.failed ? `, ${r.failed} could not be applied` : ""}.`); accRender(); }
+  else if (b.id === "accApply") { b.disabled = true; const r = await applyTodo(groupTodo()); toast(`${r.done} group change${r.done === 1 ? "" : "s"} applied${r.failed ? `, ${r.failed} could not be applied: ${r.why}` : ""}.`); accRender(); }
   else if (d.accrm) {
     const [u, base, zone, fdra] = JSON.parse(decodeURIComponent(d.accrm));
     const g = grantsOf(u).find(x => x.base === base && norm(x.zone || "") === norm(zone) && norm(x.fdra || "") === norm(fdra));
