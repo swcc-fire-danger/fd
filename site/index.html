@@ -569,12 +569,12 @@ header.top .stamp .tm{font-size:22px;font-weight:700;color:var(--hdr-ink)}
 header.top .stamp .tm small{font-size:13px;font-weight:600;color:var(--hdr-ink-2)}
 header.top .stamp .dt{font-size:12.5px;color:var(--hdr-ink-2)}
 /* header right: person + button on top, a thin line, then the processed time on one line */
-header.top .right{flex-direction:column;align-items:stretch;gap:0;min-width:min(520px,100%)}
-header.top .hr-top{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:40px;padding-bottom:8px;border-bottom:1px solid rgba(143,182,234,.45)}
-header.top .hr-btns{margin-left:auto;display:flex;gap:8px}
+header.top .right{flex-direction:column;align-items:stretch;gap:0;width:max-content;max-width:100%;margin-left:auto}
+header.top .hr-top{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:40px;padding-bottom:8px;border-bottom:1px solid rgba(143,182,234,.45)}
+header.top .hr-btns{display:flex;gap:8px}
 header.top .btn.hr-btn{background:rgba(10,42,85,.35);border:1.5px solid #f2b33d;color:#fff;font-weight:600;font-size:14px;padding:6px 16px;border-radius:8px}
 header.top .btn.hr-btn:hover{background:rgba(242,179,61,.16)}
-header.top .stamp{flex-direction:row!important;align-items:center!important;gap:10px;flex-wrap:wrap;padding:8px 0 0!important;border-left:0!important}
+header.top .stamp{flex-direction:row!important;align-items:center!important;justify-content:flex-start;gap:10px;flex-wrap:wrap;padding:8px 0 0!important;border-left:0!important}
 header.top .stamp .bar{align-self:center;width:4px;height:22px;border-radius:2px;background:#f2b33d}
 header.top .stamp .lbl{font-size:12px!important;color:#fff!important}
 header.top .stamp .sep{color:rgba(255,255,255,.7)}
@@ -610,7 +610,7 @@ nav.zones{background:var(--bar-bg);border-bottom:0}
 @media (max-width:700px){
   header.top .hdr-art{width:100%;opacity:.45;left:0;transform:none}
   header.top .brand h1{font-size:20px}
-  header.top .right{min-width:100%}
+  header.top .right{width:100%}
   header.top .stamp .sep2{display:none}
   header.top .stamp .dt{flex-basis:100%;padding-left:14px}
   header.top .stamp .tm{font-size:12px!important}
