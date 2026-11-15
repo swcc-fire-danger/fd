@@ -1132,6 +1132,7 @@ const leadsFdra = (u, k) => { const f = FDRA[k]; return !!f && (leadsZone(u, f.z
 // may person `by` give (or remove) access g?
 function mayChange(by, g, removing) {
   if (!by || !g.base) return false;
+  if (g.user && isRoot(g.user) && !isRoot(by)) return false;   // the owner's access belongs to the owner alone
   if (isAdminMgr(by)) return true;
   if (g.manager && !removing && !isMgr(by)) return false;
   if (g.base === "Admin") return isAdminU(by) && !g.manager;   // admin members add admin members only
@@ -2315,7 +2316,7 @@ function accPaintFdraFilter() {
 }
 function chipHtml(g) {
   const cls = g.base === "Admin" ? "adm" : g.base === "Viewer" ? "view" : "ldr";
-  const can = mayChange(ME(), g, true);
+  const can = mayChange(ME(), g, true) && !isRoot(g.user);
   const k = encodeURIComponent(JSON.stringify([g.user, g.base, g.zone || "", g.fdra || ""]));
   return `<span class="acc-chip ${cls}${can ? "" : " ro"}" title="Added by ${esc(leaderName(g.by))}${g.at ? " · " + esc(new Date(g.at).toLocaleDateString("en-US")) : ""}">${esc(roleLabel(g))}${g.manager && g.base !== "Admin" ? `<span class="m">Manager</span>` : ""}${can ? `<button type="button" title="Remove this access" data-accrm="${k}">×</button>` : ""}</span>`;
 }
@@ -2344,6 +2345,16 @@ function personIsMgr(p) {
   if (isRoot(p.user) || [...p.grants.values()].some(g => g.manager)) return true;
   return ["leaders", "admins"].some(k => ["owner", "admin"].includes(MEMBERS?.[k]?.get(u)?.type));
 }
+// buttons on a person's row. The owner's row: only the owner sees a button, and nobody gets Remove.
+function accActs(p, gs, anyRm) {
+  const edit = `<button class="acc-sm" data-accedit="${esc(p.user)}" data-accname="${esc(p.name)}">Edit current access</button>`;
+  const add = `<button class="acc-sm" data-accaddto="${esc(p.user)}" data-accname="${esc(p.name)}">+ Access</button>`;
+  if (isRoot(p.user)) return isRoot(ME()) ? (gs.length ? edit : add) : "";
+  const main = gs.length && gs.every(g => mayChange(ME(), g, true)) ? edit : add;
+  const rm = anyRm ? `<button class="acc-sm danger" data-accrmall="${esc(p.user)}">Remove</button>`
+    : p.arcgisOnly && isAdminU(ME()) ? `<button class="acc-sm danger" data-accrmviewer="${esc(p.user)}" data-accname="${esc(p.name)}">Remove</button>` : "";
+  return main + rm;
+}
 function accRender() {
   $("#accPeopleTab").hidden = accTab !== "people"; $("#accHistTab").hidden = accTab !== "history";
   document.querySelectorAll("[data-acctab]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.acctab === accTab)));
@@ -2358,9 +2369,7 @@ function accRender() {
     const anyRm = gs.some(g => mayChange(ME(), g, true));
     return `<div class="acc-p"><div class="who"><b>${esc(cleanName(p.name))}</b><small>${esc(p.user)}</small></div>
       <div class="chips">${isRoot(p.user) ? `<span class="acc-chip adm ro">Owner<span class="m">Manager</span></span>` : ""}${gs.map(chipHtml).join("") || (isRoot(p.user) ? "" : `<span class="acc-chip view ro">Viewer · added in ArcGIS</span>`)}</div>
-      <div class="acts">${gs.length && !isRoot(p.user) && gs.every(g => mayChange(ME(), g, true))
-        ? `<button class="acc-sm" data-accedit="${esc(p.user)}" data-accname="${esc(p.name)}">Edit current access</button>`
-        : `<button class="acc-sm" data-accaddto="${esc(p.user)}" data-accname="${esc(p.name)}">+ Access</button>`}${anyRm ? `<button class="acc-sm danger" data-accrmall="${esc(p.user)}">Remove</button>` : p.arcgisOnly && isAdminU(ME()) && !isRoot(p.user) ? `<button class="acc-sm danger" data-accrmviewer="${esc(p.user)}" data-accname="${esc(p.name)}">Remove</button>` : ""}</div></div>`;
+      <div class="acts">${accActs(p, gs, anyRm)}</div></div>`;
   }).join("") || `<div class="acc-empty">No one matches these filters.</div>`;
   $("#accPager").innerHTML = pages > 1 ? `<button class="acc-sm" data-accpage="${accPage - 1}" ${accPage === 1 ? "disabled" : ""}>‹ Previous</button><span>Page ${accPage} of ${pages}</span><button class="acc-sm" data-accpage="${accPage + 1}" ${accPage === pages ? "disabled" : ""}>Next ›</button>` : "";
 }
@@ -2494,7 +2503,7 @@ async function accSave() {
     rows = r.rows; what = "access updated" + (r.changes.length ? " (" + r.changes.join("; ") + ")" : "") + ".";
   }
   // check every change against this person's own access before saving
-  if (rows.some(r => { const p = parseRole(r.Role); return !mayChange(ME(), {base: p.base, manager: p.manager, zone: r.Zone, fdra: r.FDRA_ZONE}, p.removed); })) return toast("You can't give that access.");
+  if (rows.some(r => { const p = parseRole(r.Role); return !mayChange(ME(), {user: r.Username, base: p.base, manager: p.manager, zone: r.Zone, fdra: r.FDRA_ZONE}, p.removed); })) return toast("You can't give that access.");
   $("#accSave").disabled = true;
   try {
     await accWrite(rows); $("#accDlg").close();
@@ -2568,13 +2577,16 @@ $("#accessPage").addEventListener("click", async e => {
   else if (b.id === "accApply") { b.disabled = true; const r = await applyTodo(groupTodo()); toast(`${r.done} group change${r.done === 1 ? "" : "s"} applied${r.failed ? `, ${r.failed} could not be applied: ${r.why}` : ""}.`); accRender(); }
   else if (d.accrm) {
     const [u, base, zone, fdra] = JSON.parse(decodeURIComponent(d.accrm));
+    if (isRoot(u) && !isRoot(ME())) return;
     const g = grantsOf(u).find(x => x.base === base && norm(x.zone || "") === norm(zone) && norm(x.fdra || "") === norm(fdra));
     if (!g || !accConfirm("one" + d.accrm, b)) return;
     accRemove([g], `${leaderName(u)} · ${roleLabel(g)}`);
   } else if (d.accrmall) {
+    if (isRoot(d.accrmall)) return;
     if (!accConfirm("all" + d.accrmall, b)) return;
     accRemove(grantsOf(d.accrmall), leaderName(d.accrmall));
   } else if (d.accrmviewer) {
+    if (isRoot(d.accrmviewer)) return;
     if (!accConfirm("v" + d.accrmviewer, b)) return;
     try { await arc(`${REST}/community/groups/${OFF.pilotGroup}/removeUsers`, {users: d.accrmviewer}, true); MEMBERS?.pilot?.delete(norm(d.accrmviewer)); toast("Removed: " + d.accname); accRender(); }
     catch (err) { toast("Unable to remove: " + err.message); }
