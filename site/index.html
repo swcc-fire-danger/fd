@@ -43,6 +43,7 @@ window.APP_CONFIG = {
     leadersViewItem: "17dc665403604488a75ba32ad5e90eb1",  // FDRA_Leaders_View (everyone reads)
     leadersGroup: "95e3e6ab264e4380b80a85b7b74b55ac",     // SWCC Fire Danger Leaders
     adminsGroup: "71fd5cd4d96441fab40fa11f38e2c3e5",      // SWCC Fire Danger Admins
+    guestsGroup: "b8323391342e41a9965a9e233cf5f07d",      // SWCC Fire Danger Guests (app only, no official ratings)
     pilotGroup: "62660ea7de8b463b8e04765b124f9e26",       // SWCC Fire Danger Users (owned by the site owner)
     refreshMinutes: 2                                     // how often other people's ratings are re-read
   },
@@ -1065,7 +1066,7 @@ async function startSession(tk) {
   ss.set("fdo_tk", JSON.stringify(tk));
   clearTimeout(renewTimer);
   if (tk.exp) renewTimer = setTimeout(renewSession, Math.max(10000, tk.exp - Date.now()));
-  const [rv, lv] = await Promise.all([resolveTable(OFF.ratingsViewItem), resolveTable(OFF.leadersViewItem)]);
+  const [rv, lv] = await Promise.all([resolveTable(OFF.ratingsViewItem).catch(() => null), resolveTable(OFF.leadersViewItem).catch(() => null)]);
   SVC.ratingsView = rv; SVC.leadersView = lv;
   // the editable tables only open for people in the right group; a missing one just means "can't edit"
   SVC.ratings = await resolveTable(OFF.ratingsItem).catch(() => null);
@@ -1113,9 +1114,10 @@ async function queryAll(url, params) {
 }
 /* ---- access rules (scripts/sync_access.py applies the same rules to the ArcGIS groups) ----
    Each row is a change: Role = "<level>" or "<level> · Manager" to give access, "Removed · <level>" to take it away.
-   Levels: Viewer, FDRA Leader, Zone Leader, All Zones, Admin. A row only counts if the person who
-   saved it (ArcGIS editor tracking) was allowed to make that change at that moment. */
-const LEVELS = ["Viewer", "FDRA Leader", "Zone Leader", "All Zones", "Admin"];
+   Levels: Guest, Viewer (shown as "User"), FDRA Leader, Zone Leader, All Zones, Admin. A row only counts if the
+   person who saved it (ArcGIS editor tracking) was allowed to make that change at that moment. */
+const LEVELS = ["Guest", "Viewer", "FDRA Leader", "Zone Leader", "All Zones", "Admin"];
+const VIEW_LEVELS = ["Guest", "Viewer"];
 const LEADER_LEVELS = ["FDRA Leader", "Zone Leader", "All Zones"];
 function parseRole(v) {
   let t = String(v == null ? "" : v).trim();
@@ -1125,7 +1127,7 @@ function parseRole(v) {
   return {base, manager, removed};
 }
 const roleText = (base, manager, removed) => (removed ? "Removed · " : "") + base + (manager ? " · Manager" : "");
-const scopeKey = g => [g.base, g.base === "Viewer" || g.base === "Zone Leader" ? norm(g.zone) : "", norm(g.fdra)].join("|");
+const scopeKey = g => [g.base, VIEW_LEVELS.includes(g.base) || g.base === "Zone Leader" ? norm(g.zone) : "", norm(g.fdra)].join("|");
 const grantsOf = u => { const p = ACCESS.get(norm(u)); return p ? [...p.grants.values()] : []; };
 const isRoot = u => !!u && (norm(u) === norm(ROOT) || norm(u) === norm(OFF.owner));
 const isAdminMgr = u => isRoot(u) || grantsOf(u).some(g => g.base === "Admin" && g.manager);
@@ -1134,10 +1136,36 @@ const isMgr = u => isRoot(u) || grantsOf(u).some(g => g.manager);
 const leadsAll = u => isAdminU(u) || grantsOf(u).some(g => g.base === "All Zones");
 const leadsZone = (u, z) => leadsAll(u) || grantsOf(u).some(g => g.base === "Zone Leader" && norm(g.zone) === norm(z));
 const leadsFdra = (u, k) => { const f = FDRA[k]; return !!f && (leadsZone(u, f.zone) || grantsOf(u).some(g => g.base === "FDRA Leader" && norm(g.fdra) === norm(k))); };
-// may person `by` give (or remove) access g?
+// area a person leads; mgr = count only the leader access they manage
+const lgr = (u, mgr) => grantsOf(u).filter(g => LEADER_LEVELS.includes(g.base) && (!mgr || g.manager));
+const inAllZ = (u, mgr) => lgr(u, mgr).some(g => g.base === "All Zones");
+const inZone = (u, z, mgr) => inAllZ(u, mgr) || lgr(u, mgr).some(g => g.base === "Zone Leader" && norm(g.zone) === norm(z));
+const inFdra = (u, k, mgr) => !!FDRA[k] && (inZone(u, FDRA[k].zone, mgr) || lgr(u, mgr).some(g => g.base === "FDRA Leader" && norm(g.fdra) === norm(k)));
+const inScope = (u, g, mgr) => g.fdra ? inFdra(u, g.fdra, mgr) : g.zone ? inZone(u, g.zone, mgr) : inAllZ(u, mgr);
+const isAdminMember = u => !isAdminMgr(u) && grantsOf(u).some(g => g.base === "Admin");
+// may person `by` give (or remove/edit) access g?
+//   Admin manager: anyone.  Admin member: Guests, Users, FDRA and Zone Leaders anywhere (not admins, not All Zones).
+//   Leader manager: Guests, Users and leaders up to their own level, in the area they manage.
+//   Leader member: adds Guests and Users in their area; cannot edit or remove.
 function mayChange(by, g, removing) {
   if (!by || !g.base) return false;
   if (g.user && isRoot(g.user) && !isRoot(by)) return false;   // the owner's access belongs to the owner alone
+  if (g.user && !isRoot(by) && norm(g.user) === norm(by)) return false;   // only the owner changes their own access
+  if (isAdminMgr(by)) return true;
+  if (g.base === "Admin" || g.base === "All Zones") return false;
+  const view = VIEW_LEVELS.includes(g.base);
+  if (view && g.manager) return false;
+  if (isAdminMember(by)) return view || g.base === "FDRA Leader" || g.base === "Zone Leader";
+  if (view) return inScope(by, g, !!removing);
+  if (g.base === "Zone Leader") return inZone(by, g.zone, true);
+  if (g.base === "FDRA Leader") return inFdra(by, g.fdra, true);
+  return false;
+}
+// rules used before Guests were added (rows saved before RULES_V2_AT keep the meaning they had)
+const RULES_V2_AT = Date.UTC(2026, 10, 15, 20, 0, 0);   // 1 PM MST, Nov 15 2026
+function mayChangeV1(by, g, removing) {
+  if (!by || !g.base) return false;
+  if (g.user && isRoot(g.user) && !isRoot(by)) return false;
   if (isAdminMgr(by)) return true;
   if (g.manager && !removing && !isMgr(by)) return false;
   if (g.base === "Admin") return isAdminU(by) && !g.manager;   // admin members add admin members only
@@ -1156,7 +1184,7 @@ function buildAccess(rows, C) {
     return {user: String(att(a, "Username") || "").trim(), name: att(a, "LeaderName") || "", base: r.base, manager: r.manager, removed: r.removed,
       zone: att(a, "Zone") || (fk && FDRA[fk] ? FDRA[fk].zone : null), fdra: fk, by: a[C.creator], at: +a[C.created] || 0};
   }).filter(g => g.user && g.base && !/^test$/i.test(g.user)).sort((a, b) => a.at - b.at).forEach(g => {
-    g.ok = mayChange(g.by, g, g.removed);
+    g.ok = (g.at && g.at < RULES_V2_AT ? mayChangeV1 : mayChange)(g.by, g, g.removed);
     if (g.ok) {
       const k = norm(g.user), p = ACCESS.get(k) || {user: g.user, name: g.name || g.user, grants: new Map()};
       if (g.name) p.name = g.name;
@@ -1169,6 +1197,7 @@ function buildAccess(rows, C) {
 }
 async function loadLeaders() {
   const V = SVC.leadersView;
+  if (!V) { ACCESS = new Map(); HISTORY = []; return; }
   if (!ROOT) ROOT = OFF.owner || (await arc(`${REST}/content/items/${OFF.leadersViewItem}`)).owner || "";
   const feats = await queryAll(V.url, {where: "1=1", outFields: "*", returnGeometry: "false"});
   buildAccess(feats.map(ft => ft.attributes), V);
@@ -1177,11 +1206,11 @@ async function loadLeaders() {
 const coverRow = (u, f) => grantsOf(u).find(g => (g.base === "All Zones") || (g.base === "Zone Leader" && norm(g.zone) === norm(f.zone)) || (g.base === "FDRA Leader" && norm(g.fdra) === norm(f.key))) || null;
 const canRate = f => !!(auth.user && SVC.ratings && f && coverRow(auth.user, f));
 const leaderName = u => (ACCESS.get(norm(u)) || {}).name || u;
-const LEVEL_NAME = {"Viewer": "View only", "FDRA Leader": "FDRA Leader", "Zone Leader": "Zone Leader", "All Zones": "All Zones Leader", "Admin": "Admin"};
+const LEVEL_NAME = {"Guest": "Guest", "Viewer": "User", "FDRA Leader": "FDRA Leader", "Zone Leader": "Zone Leader", "All Zones": "All Zones Leader", "Admin": "Admin"};
 function roleLabel(g) {
   if (!g) return "";
   if (g.base === "Admin") return g.manager ? "Admin manager" : "Admin member";
-  const where = g.base === "Zone Leader" ? " · " + zoneLabel(g.zone) : g.base === "FDRA Leader" ? " · " + (g.fdra || "") : g.base === "Viewer" ? (g.fdra ? " · " + g.fdra : g.zone ? " · " + zoneLabel(g.zone) : " · All zones") : "";
+  const where = g.base === "Zone Leader" ? " · " + zoneLabel(g.zone) : g.base === "FDRA Leader" ? " · " + (g.fdra || "") : VIEW_LEVELS.includes(g.base) ? (g.fdra ? " · " + g.fdra : g.zone ? " · " + zoneLabel(g.zone) : " · All zones") : "";
   return (LEVEL_NAME[g.base] || g.base) + where;
 }
 const MY_SAVES = {};      // FDRA key -> rating this browser just saved
@@ -1215,7 +1244,7 @@ async function refreshOfficial(quiet) {
     redrawOfficial();
     $("#adminBtn").hidden = !canManageAnyone();
     paintWho();
-    if (canManageAnyone() && (isAdminU(ME()) || isMgr(ME()))) preloadMembers();
+    if (canManageAnyone()) preloadMembers();
   } catch (e) {
     if (e.tokenExpired || /token|expired|invalid/i.test(e.message)) { if (auth.token || auth.user) endSession("Your sign-in expired. Please sign in again."); }
     else {
@@ -1244,7 +1273,7 @@ function myRoleText() {
   const lead = gs.some(g => g.base === "All Zones") ? "All Zones Leader" : z.length ? `Zone Leader · ${z.join(", ")}`
     : gs.some(g => g.base === "FDRA Leader") ? `FDRA Leader · ${gs.filter(g => g.base === "FDRA Leader").length} FDRA${gs.filter(g => g.base === "FDRA Leader").length === 1 ? "" : "s"}` : "";
   if (!accessReady) return "Checking access…";
-  return [adm, lead].filter(Boolean).join(" · ") || "Viewer";
+  return [adm, lead].filter(Boolean).join(" · ") || (gs.length && gs.every(g => g.base === "Guest") ? "Guest" : "User");
 }
 function paintSigning(on) {
   if (on) {
@@ -2168,8 +2197,11 @@ $("#editForm").addEventListener("submit", async e => {
 
 /* ---------------- Access Control page ---------------- */
 const ME = () => auth.user;
-const myLevels = () => LEVELS.filter(b => mayChange(ME(), {base: b, zone: null, fdra: null, manager: false}) ||
-  (b === "FDRA Leader" && myFdras().length) || (b === "Viewer" && (myZones().length || myFdras().length)) || (b === "Zone Leader" && isAdminU(ME())));
+// levels this person can give (somewhere): leaders need to manage an area to add leaders
+const myLevels = () => LEVELS.filter(b => b !== "Admin" && (mayChange(ME(), {base: b, zone: null, fdra: null, manager: false}) ||
+  (VIEW_LEVELS.includes(b) && (myZones().length || myFdras().length)) ||
+  (b === "FDRA Leader" && (isAdminU(ME()) || META.fdras.some(f => inFdra(ME(), f.key, true)))) ||
+  (b === "Zone Leader" && (isAdminU(ME()) || ZONES().some(z => inZone(ME(), z, true))))));
 const myZones = () => ZONES().filter(z => BY_ZONE[z] && leadsZone(ME(), z));
 const myFdras = () => META.fdras.filter(f => leadsFdra(ME(), f.key)).map(f => f.key);
 function canManageAnyone() { return !!(auth.user && SVC.leaders && (isRoot(ME()) || isAdminU(ME()) || myFdras().length)); }
@@ -2178,7 +2210,7 @@ function canSee(p) {
   if (isAdminU(ME()) || norm(p.user) === norm(ME())) return true;
   return [...p.grants.values()].some(g => g.fdra ? leadsFdra(ME(), g.fdra) : g.zone ? leadsZone(ME(), g.zone) : false);
 }
-const GRP = () => ({pilot: OFF.pilotGroup, leaders: OFF.leadersGroup, admins: OFF.adminsGroup});
+const GRP = () => ({pilot: OFF.pilotGroup, guests: OFF.guestsGroup, leaders: OFF.leadersGroup, admins: OFF.adminsGroup});
 let MEMBERS = null;          // group -> Map(username -> memberType), for people who can read the groups
 let accPage = 1, accTab = "people", accForm = null;
 const ACC_PAGE = 50;
@@ -2199,20 +2231,31 @@ async function loadMembers() {
   MEMBERS = out; membersAt = Date.now();   // swap in only when complete, so nothing shows half-loaded
 }
 // group membership each person should have, from their access
+//   Guest: Guests member · User: Users member
+//   any leader: Users + Guests manager (so they can add people there); Leaders member, or manager for leader managers
+//   Admin member: also Leaders manager + Admins member · Admin manager: manager everywhere
 function wantGroups(u) {
   const gs = grantsOf(u), w = {};
   if (!gs.length) return w;
-  // leaders and admins manage the Pilot group, so the people they add can open the app right away
-  w.pilot = gs.some(g => g.manager || g.base !== "Viewer") ? "admin" : "member";
-  const L = gs.filter(g => LEADER_LEVELS.includes(g.base)); if (L.length) w.leaders = L.some(g => g.manager) ? "admin" : "member";
-  const A = gs.filter(g => g.base === "Admin"); if (A.length) w.admins = A.some(g => g.manager) ? "admin" : "member";
+  const L = gs.filter(g => LEADER_LEVELS.includes(g.base)), A = gs.filter(g => g.base === "Admin");
+  if (L.length || A.length) {
+    w.pilot = "admin"; w.guests = "admin";
+    w.leaders = L.some(g => g.manager) || A.length ? "admin" : "member";
+    if (A.length) w.admins = A.some(g => g.manager) ? "admin" : "member";
+  } else if (gs.some(g => g.base === "Viewer")) w.pilot = "member";
+  else if (gs.some(g => g.base === "Guest")) w.guests = "member";
   return w;
 }
 // groups a person lost through a "Removed" change (only those are ever taken away)
 function lostGroups(u) {
   const out = new Set(), w = wantGroups(u), had = HISTORY.filter(h => h.ok && h.removed && norm(h.user) === norm(u));
-  had.forEach(h => { if (LEADER_LEVELS.includes(h.base)) out.add("leaders"); if (h.base === "Admin") out.add("admins"); });
-  if (had.length && !grantsOf(u).length) out.add("pilot");
+  had.forEach(h => {
+    if (h.base === "Guest") out.add("guests");
+    if (h.base === "Viewer") out.add("pilot");
+    if (LEADER_LEVELS.includes(h.base)) ["leaders", "guests", "pilot"].forEach(k => out.add(k));
+    if (h.base === "Admin") ["admins", "leaders", "guests", "pilot"].forEach(k => out.add(k));
+  });
+  if (had.length && !grantsOf(u).length) Object.keys(GRP()).forEach(k => out.add(k));
   Object.keys(w).forEach(k => out.delete(k));
   return out;
 }
@@ -2257,7 +2300,11 @@ async function applyTodo(todo) {
       } else if (t.act === "promote") {
         roleOk(await arc(`${REST}/community/groups/${id}/updateUsers`, {admins: user}, true), user); MEMBERS[t.k]?.set(t.u, {type: "admin", user});
       } else {
-        await arc(`${REST}/community/groups/${id}/removeUsers`, {users: user}, true); MEMBERS[t.k]?.delete(t.u);
+        // a manager is made a member first, then removed (works whether or not ArcGIS lets managers remove managers)
+        if (MEMBERS[t.k]?.get(t.u)?.type === "admin") roleOk(await arc(`${REST}/community/groups/${id}/updateUsers`, {users: user}, true), user);
+        const j = await arc(`${REST}/community/groups/${id}/removeUsers`, {users: user}, true);
+        if ((j.notRemoved || []).length) throw new Error("ArcGIS did not remove " + user + " from the group");
+        MEMBERS[t.k]?.delete(t.u);
       }
       done++;
     } catch (e) { failed++; why = why || e.message; }
@@ -2308,7 +2355,7 @@ function closeAccess() {
   setHash(); mapApi?.refresh();
 }
 function accPaintFilters() {
-  const lv = isAdminU(ME()) ? LEVELS : ["Viewer", "FDRA Leader", "Zone Leader"];
+  const lv = isAdminU(ME()) ? LEVELS : ["Guest", "Viewer", "FDRA Leader", "Zone Leader"];
   $("#accFRole").innerHTML = `<option value="">All access levels</option>` + lv.map(b => `<option value="${b}">${LEVEL_NAME[b]}</option>`).join("");
   const zones = isAdminU(ME()) ? ZONES().filter(z => BY_ZONE[z]) : [...new Set([...myZones(), ...myFdras().map(k => FDRA[k].zone)])];
   $("#accFZone").innerHTML = (zones.length > 1 ? `<option value="">All zones</option>` : "") + zones.map(z => `<option value="${esc(z)}">${esc(zoneLabel(z))}</option>`).join("");
@@ -2320,7 +2367,7 @@ function accPaintFdraFilter() {
   $("#accFFdra").innerHTML = `<option value="">All FDRAs</option>` + list.map(f => `<option value="${esc(f.key)}">${esc(z ? f.name : f.key)}</option>`).join("");
 }
 function chipHtml(g) {
-  const cls = g.base === "Admin" ? "adm" : g.base === "Viewer" ? "view" : "ldr";
+  const cls = g.base === "Admin" ? "adm" : VIEW_LEVELS.includes(g.base) ? "view" : "ldr";
   const can = false;   // access is changed with Edit current access or Remove, not from the chips
   const k = encodeURIComponent(JSON.stringify([g.user, g.base, g.zone || "", g.fdra || ""]));
   return `<span class="acc-chip ${cls}${can ? "" : " ro"}" title="Added by ${esc(leaderName(g.by))}${g.at ? " · " + esc(new Date(g.at).toLocaleDateString("en-US")) : ""}">${esc(roleLabel(g))}${g.manager && g.base !== "Admin" ? `<span class="m">Manager</span>` : ""}${can ? `<button type="button" title="Remove this access" data-accrm="${k}">×</button>` : ""}</span>`;
@@ -2329,6 +2376,7 @@ function accFiltered() {
   const q = norm($("#accQ").value), fr = $("#accFRole").value, fz = $("#accFZone").value, ff = $("#accFFdra").value, fm = $("#accFMgr").checked;
   let people = [...ACCESS.values()].filter(canSee);
   // admins also see viewers who were added straight in ArcGIS (not through this page)
+  if (isAdminU(ME()) && MEMBERS?.guests) MEMBERS.guests.forEach((m, u) => { if (!ACCESS.has(u) && !MEMBERS?.pilot?.has(u) && m.type === "member") people.push({user: m.user || u, name: m.name, grants: new Map(), arcgisOnly: true, guest: true}); });
   if (isAdminU(ME()) && MEMBERS?.pilot) MEMBERS.pilot.forEach((m, u) => { if (!ACCESS.has(u)) people.push({user: m.user || u, name: m.name, grants: new Map(), arcgisOnly: true}); });
   // the owner is always listed, even with no access rows
   if (OFF.owner && (isAdminU(ME()) || isRoot(ME())) && !people.some(p => isRoot(p.user))) people.push({user: OFF.owner, name: leaderName(OFF.owner), grants: new Map(), ownerOnly: true});
@@ -2355,9 +2403,10 @@ function accActs(p, gs, anyRm) {
   const edit = `<button class="acc-sm" data-accedit="${esc(p.user)}" data-accname="${esc(p.name)}">Edit current access</button>`;
   const add = `<button class="acc-sm" data-accaddto="${esc(p.user)}" data-accname="${esc(p.name)}">+ Access</button>`;
   if (isRoot(p.user)) return isRoot(ME()) ? (gs.length ? edit : add) : "";
-  const main = gs.length && gs.every(g => mayChange(ME(), g, true)) ? edit : add;
+  if (gs.length && !anyRm) return "";          // access partly or fully outside what this person manages: hands off
+  const main = gs.length ? edit : add;
   const rm = anyRm ? `<button class="acc-sm danger" data-accrmall="${esc(p.user)}">Remove</button>`
-    : p.arcgisOnly && isAdminU(ME()) ? `<button class="acc-sm danger" data-accrmviewer="${esc(p.user)}" data-accname="${esc(p.name)}">Remove</button>` : "";
+    : p.arcgisOnly && isAdminU(ME()) ? `<button class="acc-sm danger" data-accrmviewer="${esc(p.user)}" data-accgrp="${p.guest ? "guests" : "pilot"}" data-accname="${esc(p.name)}">Remove</button>` : "";
   return main + rm;
 }
 function accRender() {
@@ -2371,9 +2420,9 @@ function accRender() {
   $("#accCount").textContent = `${list.length.toLocaleString("en-US")} ${list.length === 1 ? "person" : "people"}`;
   $("#accRows").innerHTML = rows.map(p => {
     const gs = [...p.grants.values()].sort((a, b) => LEVELS.indexOf(b.base) - LEVELS.indexOf(a.base));
-    const anyRm = gs.some(g => mayChange(ME(), g, true));
+    const anyRm = gs.length > 0 && gs.every(g => mayChange(ME(), g, true));   // only people fully inside what this person manages
     return `<div class="acc-p"><div class="who"><b>${esc(cleanName(p.name))}</b><small>${esc(p.user)}</small></div>
-      <div class="chips">${isRoot(p.user) ? `<span class="acc-chip adm ro">Owner<span class="m">Manager</span></span>` : ""}${gs.map(chipHtml).join("") || (isRoot(p.user) ? "" : `<span class="acc-chip view ro">Viewer · added in ArcGIS</span>`)}</div>
+      <div class="chips">${isRoot(p.user) ? `<span class="acc-chip adm ro">Owner<span class="m">Manager</span></span>` : ""}${gs.map(chipHtml).join("") || (isRoot(p.user) ? "" : `<span class="acc-chip view ro">${p.guest ? "Guest" : "User"} · added in ArcGIS</span>`)}</div>
       <div class="acts">${accActs(p, gs, anyRm)}</div></div>`;
   }).join("") || `<div class="acc-empty">No one matches these filters.</div>`;
   $("#accPager").innerHTML = pages > 1 ? `<button class="acc-sm" data-accpage="${accPage - 1}" ${accPage === 1 ? "disabled" : ""}>‹ Previous</button><span>Page ${accPage} of ${pages}</span><button class="acc-sm" data-accpage="${accPage + 1}" ${accPage === pages ? "disabled" : ""}>Next ›</button>` : "";
@@ -2388,20 +2437,20 @@ function accRenderHistory() {
 }
 /* ---- add form ---- */
 const RATING = [
-  ["Viewer", "View only", "Opens the app and sees everything. Can't change anything."],
+  ["Guest", "Guest", "Opens the app and sees the map and FEMS fire danger. No official ratings."],
+  ["Viewer", "User", "Sees everything, including today's official ratings. Can't change anything."],
   ["FDRA Leader", "FDRA Leader", "Sets the official rating for chosen FDRAs."],
   ["Zone Leader", "Zone Leader", "Sets the official rating for every FDRA in one zone."],
-  ["All Zones", "All Zones Leader", "Sets the official rating for every FDRA in the Southwest."],
-  ["", "No rating access", "Administration only."]
+  ["All Zones", "All Zones Leader", "Sets the official rating for every FDRA in the Southwest."]
 ];
 // the person's current access, in the form's terms
 function accCurrentForm(user) {
-  const gs = grantsOf(user), order = ["All Zones", "Zone Leader", "FDRA Leader", "Viewer"];
+  const gs = grantsOf(user), order = ["All Zones", "Zone Leader", "FDRA Leader", "Viewer", "Guest"];
   const level = order.find(b => gs.some(g => g.base === b)) || "";
   const mine = gs.filter(g => g.base === level), adm = gs.find(g => g.base === "Admin");
   let zone = "", fdras = [];
   if (level === "Zone Leader") zone = mine[0].zone || "";
-  if (level === "FDRA Leader" || level === "Viewer") {
+  if (level === "FDRA Leader" || VIEW_LEVELS.includes(level)) {
     zone = (mine.find(g => g.fdra) ? FDRA[mine.find(g => g.fdra).fdra]?.zone : mine[0].zone) || "";
     fdras = mine.filter(g => g.fdra && norm(FDRA[g.fdra]?.zone) === norm(zone)).map(g => g.fdra);
   }
@@ -2419,11 +2468,11 @@ function accOpenForm(person, edit) {
 }
 function accRatingChoices() {
   const lv = myLevels();
-  return RATING.filter(([b]) => b ? lv.includes(b) : isAdminU(ME()));
+  return RATING.filter(([b]) => lv.includes(b));
 }
 function accPaintForm() {
   const F = accForm, choices = accRatingChoices(), isAdm = isAdminU(ME()), isAdmMgr = isAdminMgr(ME());
-  if (F.level == null || !choices.some(c => c[0] === F.level)) F.level = F.edit && F.level === "" ? "" : choices[0] ? choices[0][0] : "";
+  if (F.level == null || !choices.some(c => c[0] === F.level)) F.level = choices[0] ? choices[0][0] : "";
   // 1 person
   $("#accWho").hidden = !!F.person; $("#accChosen").hidden = !F.person;
   if (F.person) $("#accChosen").innerHTML = `<span><b>${esc(F.person.name)}</b> <small>${esc(F.person.user)}</small></span>${F.edit ? "" : `<button class="acc-sm" type="button" id="accChange">Change</button>`}`;
@@ -2432,7 +2481,7 @@ function accPaintForm() {
   const ownerLocked = !!(F.person && !F.edit && isRoot(F.person.user) && !isRoot(ME()));
   const canEdit = !!(has.length && (isRoot(F.person.user) ? isRoot(ME()) : has.every(g => mayChange(ME(), g, true))));
   F.blocked = ownerLocked || canEdit;
-  const chips = has.map(g => `<span class="acc-chip ${g.base === "Admin" ? "adm" : g.base === "Viewer" ? "view" : "ldr"} ro">${esc(roleLabel(g))}${g.manager && g.base !== "Admin" ? `<span class="m">Manager</span>` : ""}</span>`).join("");
+  const chips = has.map(g => `<span class="acc-chip ${g.base === "Admin" ? "adm" : VIEW_LEVELS.includes(g.base) ? "view" : "ldr"} ro">${esc(roleLabel(g))}${g.manager && g.base !== "Admin" ? `<span class="m">Manager</span>` : ""}</span>`).join("");
   $("#accHas").hidden = !(ownerLocked || has.length);
   $("#accHas").innerHTML = ownerLocked ? "<b>This is the site owner.</b> Only the owner can change this access."
     : canEdit ? `<b>${esc(cleanName(F.person.name))} already has access:</b><div>${chips}</div><button class="btn primary" type="button" data-accswitch="1">Edit current access</button>`
@@ -2441,38 +2490,40 @@ function accPaintForm() {
   $("#accSave").disabled = F.blocked;
   // 2 rating access + where
   $("#accLevels").innerHTML = choices.map(([b, t, d]) => `<button type="button" role="radio" aria-checked="${F.level === b}" data-acclevel="${b || "none"}"><b>${t}</b><span>${d}</span></button>`).join("");
-  const needZone = ["Zone Leader", "FDRA Leader", "Viewer"].includes(F.level), needFdra = F.level === "FDRA Leader" || F.level === "Viewer";
+  const viewLv = VIEW_LEVELS.includes(F.level);
+  const needZone = F.level === "Zone Leader" || F.level === "FDRA Leader" || viewLv, needFdra = F.level === "FDRA Leader" || viewLv;
   $("#accWhere").hidden = !needZone;
   const allZ = ZONES().filter(z => BY_ZONE[z]);
-  const zones = F.level === "Zone Leader" || isAdm || leadsAll(ME()) ? allZ : [...new Set([...myZones(), ...myFdras().map(k => FDRA[k].zone)])];
+  const zones = isAdm || leadsAll(ME()) ? allZ : F.level === "Zone Leader" ? allZ.filter(z => inZone(ME(), z, true)) : [...new Set([...myZones(), ...myFdras().map(k => FDRA[k].zone)])];
   const zSel = $("#accZone"), keep = F.initZone !== undefined ? F.initZone : zSel.value;
-  zSel.innerHTML = (F.level === "Viewer" && leadsAll(ME()) ? `<option value="">All zones</option>` : "") + zones.map(z => `<option value="${esc(z)}">${esc(zoneLabel(z))}</option>`).join("");
+  zSel.innerHTML = (viewLv && leadsAll(ME()) ? `<option value="">All zones</option>` : "") + zones.map(z => `<option value="${esc(z)}">${esc(zoneLabel(z))}</option>`).join("");
   if ([...zSel.options].some(o => o.value === keep)) zSel.value = keep;
-  $("#accZoneLbl").textContent = F.level === "Viewer" ? "Their zone (for filtering)" : "Zone";
-  $("#accFdraWrap").hidden = !needFdra || (F.level === "Viewer" && !zSel.value);
-  $("#accFdraLbl").textContent = F.level === "Viewer" ? "Their FDRAs (optional)" : "FDRAs they rate";
+  $("#accZoneLbl").textContent = viewLv ? "Their zone (for filtering)" : "Zone";
+  $("#accFdraWrap").hidden = !needFdra || (viewLv && !zSel.value);
+  $("#accFdraLbl").textContent = viewLv ? "Their FDRAs (optional)" : "FDRAs they rate";
   if (needFdra) {
     const z = zSel.value, was = new Set(F.initFdras || [...$("#accFdras").querySelectorAll("input:checked")].map(i => i.value));
-    $("#accFdras").innerHTML = (BY_ZONE[z] || []).filter(f => leadsFdra(ME(), f.key)).map(f => `<label><input type="checkbox" value="${esc(f.key)}"${was.has(f.key) ? " checked" : ""}> ${esc(f.name)}</label>`).join("");
+    $("#accFdras").innerHTML = (BY_ZONE[z] || []).filter(f => F.level === "FDRA Leader" && !isAdm ? inFdra(ME(), f.key, true) : leadsFdra(ME(), f.key)).map(f => `<label><input type="checkbox" value="${esc(f.key)}"${was.has(f.key) ? " checked" : ""}> ${esc(f.name)}</label>`).join("");
   }
   delete F.initZone; delete F.initFdras;
   // 3 role for that rating access (leaders only)
-  const leader = LEADER_LEVELS.includes(F.level), canMgr = isMgr(ME());
+  const leader = LEADER_LEVELS.includes(F.level), canMgr = isAdminU(ME()) || lgr(ME(), true).length > 0;
   if (!canMgr) F.manager = false;
   $("#accMgrStep").hidden = !leader;
   $("#accMgrTitle").textContent = `Role as ${LEVEL_NAME[F.level] || "leader"}`;
-  $("#accMgr").innerHTML = `<button type="button" role="radio" aria-checked="${!F.manager}" data-accmgr="0"><b>Member</b><span>Adds and removes people in their area.</span></button>`
-    + (canMgr ? `<button type="button" role="radio" aria-checked="${F.manager}" data-accmgr="1"><b>Manager</b><span>Also makes people managers in their area.</span></button>` : "");
-  // 4 administration (admins only)
-  $("#accAdmStep").hidden = !isAdm;
-  if (!isAdmMgr && F.admin === "manager") F.admin = "";
-  if (isAdm) $("#accAdm").innerHTML = [["", "No admin access", "Uses only the rating access above."], ["member", "Admin member", "Adds and removes people in any zone."]]
-    .concat(isAdmMgr ? [["manager", "Admin manager", "Also adds admins, managers and All Zones leaders."]] : [])
+  $("#accMgr").innerHTML = `<button type="button" role="radio" aria-checked="${!F.manager}" data-accmgr="0"><b>Member</b><span>Adds Guests and Users in their area.</span></button>`
+    + (canMgr ? `<button type="button" role="radio" aria-checked="${F.manager}" data-accmgr="1"><b>Manager</b><span>Also adds leaders, and edits or removes people in their area.</span></button>` : "");
+  // 4 administration (admin managers only, and only with a leader level)
+  const admStep = isAdmMgr && leader;
+  $("#accAdmStep").hidden = !admStep;
+  if (!admStep) F.admin = "";
+  if (admStep) $("#accAdm").innerHTML = [["", "No admin access", "Uses only the leader access above."], ["member", "Admin member", "Adds, edits and removes Guests, Users, FDRA and Zone Leaders in any zone."],
+    ["manager", "Admin manager", "Also manages admins and All Zones Leaders."]]
     .map(([v, t, d]) => `<button type="button" role="radio" aria-checked="${F.admin === v}" data-accadm="${v || "none"}"><b>${t}</b><span>${d}</span></button>`).join("");
   // step numbers follow what is shown
   let n = 2;
-  [["#accMgrStep", leader], ["#accAdmStep", isAdm]].forEach(([id, on]) => { if (on) $(id + " .n").textContent = ++n; });
-  $("#accSummary").textContent = F.blocked ? "" : !F.person ? "Choose a person to continue." : !F.level && !F.admin ? "Choose rating access or admin access." : "";
+  [["#accMgrStep", leader], ["#accAdmStep", admStep]].forEach(([id, on]) => { if (on) $(id + " .n").textContent = ++n; });
+  $("#accSummary").textContent = F.blocked ? "" : !F.person ? "Choose a person to continue." : !F.level ? "Choose an access level." : "";
 }
 async function accSearch() {
   const t = $("#accPQ").value.trim(); if (!t) return;
@@ -2489,7 +2540,7 @@ async function accWrite(rows) {
 }
 async function accAfterChange(user, msg, edited) {
   await loadLeaders();
-  if (MEMBERS || isMgr(ME()) || isAdminU(ME())) {
+  if (MEMBERS || canManageAnyone()) {      // anyone who can add people also manages the groups they add to
     if (!MEMBERS) await loadMembers();
     const r = await applyTodo(groupTodo(user, edited));
     if (r.failed) { toast(`${msg} · ${r.failed} group change${r.failed === 1 ? "" : "s"} could not be made${r.why ? ": " + r.why : ""}`); accRender(); await loadRatings(); renderAll(); mapApi?.refresh(); return; }
@@ -2500,7 +2551,8 @@ async function accSave() {
   const F = accForm;
   if (!F.person) return toast("Choose a person first.");
   if (F.blocked) return;
-  if (!F.level && !F.admin) return toast("Choose rating access or admin access.");
+  if (!F.level) return toast("Choose an access level.");
+  if (!LEADER_LEVELS.includes(F.level)) { F.admin = ""; F.manager = false; }
   const z = $("#accZone").value || null, keys = [...$("#accFdras").querySelectorAll("input:checked")].map(i => i.value);
   const who = {Username: F.person.user, LeaderName: F.person.name};
   let rows = [];
@@ -2544,7 +2596,7 @@ function accEditRows(F, want, zone) {
   // remove what was unselected; FDRAs in other zones than the one shown stay as they are
   cur.forEach(c => {
     if (wantKeys.has(scopeKey(c))) return;
-    const otherZone = c.base === F.level && (c.base === "FDRA Leader" || c.base === "Viewer") && norm(c.fdra ? FDRA[c.fdra]?.zone : c.zone) !== norm(zone || "");
+    const otherZone = c.base === F.level && (c.base === "FDRA Leader" || VIEW_LEVELS.includes(c.base)) && norm(c.fdra ? FDRA[c.fdra]?.zone : c.zone) !== norm(zone || "");
     if (otherZone || !mayChange(ME(), c, true)) return;
     out.push({Username: user, LeaderName: F.person.name, Role: roleText(c.base, false, true), Zone: c.zone || null, FDRA: c.fdra ? FDRA[c.fdra]?.name || null : null, FDRA_ZONE: c.fdra || null});
     changes.push(`removed ${roleLabel(c)}`);
@@ -2607,7 +2659,8 @@ $("#accessPage").addEventListener("click", async e => {
   } else if (d.accrmviewer) {
     if (isRoot(d.accrmviewer)) return;
     if (!accConfirm("v" + d.accrmviewer, b)) return;
-    try { await arc(`${REST}/community/groups/${OFF.pilotGroup}/removeUsers`, {users: d.accrmviewer}, true); MEMBERS?.pilot?.delete(norm(d.accrmviewer)); toast("Removed: " + d.accname); accRender(); }
+    const gk = d.accgrp === "guests" ? "guests" : "pilot";
+    try { await arc(`${REST}/community/groups/${GRP()[gk]}/removeUsers`, {users: d.accrmviewer}, true); MEMBERS?.[gk]?.delete(norm(d.accrmviewer)); toast("Removed: " + d.accname); accRender(); }
     catch (err) { toast("Unable to remove: " + err.message); }
   }
 });
