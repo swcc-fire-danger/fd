@@ -947,13 +947,46 @@ const att = (a, k) => { if (k in a) return a[k]; const m = Object.keys(a).find(x
 const ss = {get: k => { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
             set: (k, v) => { try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch (e) {} }};
 
-async function arc(url, params = {}, post = false) {
+const isTokenError = e => !!e && ([498, 499].includes(+e.code) || /invalid token|token required|token.*expired/i.test(e.message || ""));
+async function arc(url, params = {}, post = false, retried = false) {
   const q = new URLSearchParams({f: "json", ...params});
   if (auth.token) q.set("token", auth.token);
   const r = post ? await fetch(url, {method: "POST", body: q}) : await fetch(url + "?" + q);
   const j = await r.json();
-  if (j.error) throw new Error(j.error.message || "ArcGIS request failed");
+  if (j.error) {
+    if (isTokenError(j.error) && auth.token && !retried && await renewSession()) return arc(url, params, post, true);
+    const err = new Error(j.error.message || "ArcGIS request failed"); err.tokenExpired = isTokenError(j.error); throw err;
+  }
   return j;
+}
+// sign-in ran out: try again quietly; if that is not possible, show the page as signed out
+let renewing = null, renewTimer = null;
+function renewSession() {
+  if (renewing) return renewing;
+  renewing = (async () => {
+    try {
+      const old = JSON.parse(ss.get("fdo_tk") || "null");
+      let tk = null;
+      if (old && old.rt) tk = await refreshToken(old.rt).catch(() => null);
+      if (!tk) tk = await silentSignIn();
+      await startSession(tk); refreshOfficial(true); return true;
+    }
+    catch (e) { endSession("Your sign-in expired. Please sign in again."); return false; }
+    finally { setTimeout(() => { renewing = null; }, 0); }
+  })();
+  return renewing;
+}
+function endSession(msg) {
+  clearTimeout(renewTimer);
+  ss.set("fdo_tk", null);
+  auth.token = null; auth.user = null; auth.name = null; auth.admin = false; auth.manager = false;
+  accessReady = false; ratings = {}; MEMBERS = null;
+  ["#editDlg", "#accDlg", "#noteDlg"].forEach(id => { const d = $(id); if (d && d.open) d.close(); });
+  if (!$("#accessPage").hidden) closeAccess();
+  $("#adminBtn").hidden = true;
+  paintWho(); paintSigning(false);
+  redrawOfficial();
+  if (msg) toast(msg);
 }
 const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 async function newPkce() {
@@ -978,7 +1011,14 @@ async function codeToToken(code, k) {
     grant_type: "authorization_code", code, redirect_uri: REDIRECT, code_verifier: k.v, f: "json"})});
   const j = await r.json();
   if (!j.access_token) throw new Error(j.error_description || j.error?.message || "Sign-in failed");
-  return {token: j.access_token, exp: Date.now() + (j.expires_in || 7200) * 1000 - 60000, user: j.username};
+  return {token: j.access_token, exp: Date.now() + (j.expires_in || 7200) * 1000 - 60000, user: j.username, rt: j.refresh_token || null};
+}
+// keep the person signed in: ArcGIS gives a renewal code with the sign-in, used here before the sign-in runs out
+async function refreshToken(rt) {
+  const r = await fetch(REST + "/oauth2/token", {method: "POST", body: new URLSearchParams({client_id: OFF.clientId, grant_type: "refresh_token", refresh_token: rt, f: "json"})});
+  const j = await r.json();
+  if (!j.access_token) throw new Error("renewal not accepted");
+  return {token: j.access_token, exp: Date.now() + (j.expires_in || 1800) * 1000 - 60000, user: j.username, rt};
 }
 // 1) quietly, inside the page (works when the person is already signed in to ArcGIS)
 async function silentSignIn() {
@@ -1018,6 +1058,8 @@ async function startSession(tk) {
   auth.manager = !!ag && ["owner", "admin"].includes(ag.userMembership?.memberType);
   auth.inLeaders = gids.includes(OFF.leadersGroup);
   ss.set("fdo_tk", JSON.stringify(tk));
+  clearTimeout(renewTimer);
+  if (tk.exp) renewTimer = setTimeout(renewSession, Math.max(10000, tk.exp - Date.now()));
   const [rv, lv] = await Promise.all([resolveTable(OFF.ratingsViewItem), resolveTable(OFF.leadersViewItem)]);
   SVC.ratingsView = rv; SVC.leadersView = lv;
   // the editable tables only open for people in the right group; a missing one just means "can't edit"
@@ -1169,7 +1211,7 @@ async function refreshOfficial(quiet) {
     paintWho();
     if (canManageAnyone() && (isAdminU(ME()) || isMgr(ME()))) preloadMembers();
   } catch (e) {
-    if (/token|expired|invalid/i.test(e.message)) { ss.set("fdo_tk", null); if (!quiet) toast("Your sign-in expired. Please sign in again."); $("#signInBtn").hidden = false; auth.token = null; }
+    if (e.tokenExpired || /token|expired|invalid/i.test(e.message)) { if (auth.token || auth.user) endSession("Your sign-in expired. Please sign in again."); }
     else {
       if (!quiet) toast("Access and official ratings could not be loaded (" + e.message + "). Trying again…");
       if (!accessReady) setTimeout(() => refreshOfficial(true), 4000);
@@ -2114,7 +2156,7 @@ $("#editForm").addEventListener("submit", async e => {
     redrawOfficial();
     toast(editPick ? `Official rating set: ${f.name} · ${editPick}` : `${f.name} is back on the FEMS rating`);
     refreshOfficial(true);
-  } catch (err) { toast("Unable to save: " + err.message); }
+  } catch (err) { toast(err.tokenExpired ? "Your sign-in expired. Please sign in again, then set the rating." : "Unable to save: " + err.message); }
   finally { $("#editSave").disabled = false; }
 });
 
@@ -2457,7 +2499,7 @@ async function accSave() {
   try {
     await accWrite(rows); $("#accDlg").close();
     await accAfterChange(F.person.user, `${cleanName(F.person.name)}: ${what}`, F.edit);
-  } catch (e) { toast("Unable to save: " + e.message); }
+  } catch (e) { toast(e.tokenExpired ? "Your sign-in expired. Please sign in again." : "Unable to save: " + e.message); }
   finally { $("#accSave").disabled = false; }
 }
 // rows that turn the person's current access into what the form shows
@@ -2487,7 +2529,7 @@ async function accRemove(grants, label) {
     Zone: g.zone || null, FDRA: g.fdra ? FDRA[g.fdra]?.name || null : null, FDRA_ZONE: g.fdra || null}));
   if (!rows.length) return;
   try { await accWrite(rows); await accAfterChange(grants[0].user, "Removed: " + label); }
-  catch (e) { toast("Unable to remove: " + e.message); }
+  catch (e) { toast(e.tokenExpired ? "Your sign-in expired. Please sign in again." : "Unable to remove: " + e.message); }
 }
 let accArmed = null;
 function accConfirm(key, btn) {     // two clicks to remove, no browser pop-ups
