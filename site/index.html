@@ -17,6 +17,10 @@
   try { window.stop(); } catch (e) {}
 })();
 </script>
+<script>
+/* light / dark: saved choice from the header switch; nothing saved = follow the device */
+(function () { try { var t = localStorage.getItem("fd_theme"); if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t); } catch (e) {} })();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Southwest Fire Danger</title>
 <meta name="description" content="Fire danger by FDRA for Arizona and New Mexico, from FEMS data.">
@@ -63,7 +67,7 @@ window.APP_CONFIG = {
 </script>
 <style>
 :root{
-  --bg:#f4f3ef; --surface:#ffffff; --surface-2:#f8f7f4; --line:#dcd9d2; --line-strong:#9b978e;
+  --bg:#F2F2F2; --surface:#ffffff; --surface-2:#f8f7f4; --line:#dcd9d2; --line-strong:#9b978e;
   --ink:#1b1a17; --ink-2:#55524b; --ink-3:#7d796f; --accent:#7a2e12; --accent-ink:#ffffff;
   --tab:#ebe8e1; --focus:#2a78d6; --shadow:0 1px 2px rgba(0,0,0,.06),0 2px 8px rgba(0,0,0,.05);
   --cls-ink:#1b1a17;
@@ -574,6 +578,16 @@ header.top .hr-top{display:flex;align-items:center;justify-content:space-between
 header.top .hr-btns{display:flex;gap:8px}
 header.top .btn.hr-btn{background:rgba(10,42,85,.35);border:1.5px solid #f2b33d;color:#fff;font-weight:600;font-size:14px;padding:6px 16px;border-radius:8px}
 header.top .btn.hr-btn:hover{background:rgba(242,179,61,.16)}
+header.top .theme-wrap{position:relative;display:flex}
+header.top .btn.hr-icon{width:36px;height:36px;padding:0;border-radius:50%;display:grid;place-items:center;background:rgba(10,42,85,.35);border:1.5px solid rgba(143,182,234,.55);color:#fff}
+header.top .btn.hr-icon:hover{background:rgba(143,182,234,.18)}
+header.top .btn.hr-icon svg,.theme-menu .ti svg{width:18px;height:18px;display:block}
+.theme-menu{position:fixed;z-index:1000;min-width:140px;padding:4px;border-radius:10px;background:var(--surface);border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.25);display:flex;flex-direction:column}
+.theme-menu[hidden]{display:none}
+.theme-menu button{display:flex;align-items:center;gap:10px;padding:8px 10px;border:0;border-radius:7px;background:transparent;color:var(--ink);font:inherit;font-size:13.5px;text-align:left;cursor:pointer}
+.theme-menu button:hover{background:var(--surface-2)}
+.theme-menu button[aria-checked="true"]{font-weight:700;background:var(--surface-2)}
+.theme-menu .ti{color:var(--ink-2)}
 header.top .stamp{flex-direction:row!important;align-items:center!important;justify-content:flex-start;gap:10px;flex-wrap:wrap;padding:8px 0 0!important;border-left:0!important}
 header.top .stamp .bar{align-self:center;width:4px;height:22px;border-radius:2px;background:#f2b33d}
 header.top .stamp .lbl{font-size:12px!important;color:#fff!important}
@@ -669,6 +683,12 @@ footer.site-foot{margin-top:40px;background:var(--hdr-bg);border-top:4px solid #
     </div>
     <div class="right">
       <div class="hr-top"><span class="user-chip" id="userChip"></span><span class="hr-btns">
+        <span class="theme-wrap"><button class="btn hr-icon" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false" title="Appearance"></button>
+          <span class="theme-menu" id="themeMenu" role="menu" hidden>
+            <button type="button" role="menuitemradio" data-theme-set="device"><span class="ti" data-icon="device"></span>Device</button>
+            <button type="button" role="menuitemradio" data-theme-set="light"><span class="ti" data-icon="light"></span>Light</button>
+            <button type="button" role="menuitemradio" data-theme-set="dark"><span class="ti" data-icon="dark"></span>Dark</button>
+          </span></span>
         <button class="btn hr-btn" id="signInBtn" hidden title="Sign in with your ArcGIS account to see official ratings">Sign in</button>
         <button class="btn hr-btn" id="adminBtn" hidden>Access Control</button></span></div>
       <div class="stamp" aria-live="polite"><span class="bar"></span><span class="lbl">FEMS data last processed</span><span class="sep">·</span><span class="tm" id="lastFetched">Loading…</span><span class="sep sep2">·</span><span class="dt" id="lastFetchedDate"></span></div>
@@ -1074,6 +1094,38 @@ async function startSession(tk) {
   $("#signInBtn").hidden = true;
   paintWho();
 }
+/* ---- light / dark switch ---- */
+const THEME_ICON = {
+  light: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></svg>',
+  dark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z"/></svg>',
+  device: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></svg>'
+};
+function themeNow() { try { const t = localStorage.getItem("fd_theme"); return t === "light" || t === "dark" ? t : "device"; } catch (e) { return "device"; } }
+function themeApply(t) {
+  try { t === "device" ? localStorage.removeItem("fd_theme") : localStorage.setItem("fd_theme", t); } catch (e) {}
+  t === "device" ? document.documentElement.removeAttribute("data-theme") : document.documentElement.setAttribute("data-theme", t);
+  themePaint();
+}
+function themePaint() {
+  const t = themeNow(), names = {device: "Device", light: "Light", dark: "Dark"};
+  $("#themeBtn").innerHTML = THEME_ICON[t];
+  $("#themeBtn").title = $("#themeBtn").ariaLabel = "Appearance: " + names[t];
+  document.querySelectorAll("[data-theme-set]").forEach(b => b.setAttribute("aria-checked", String(b.dataset.themeSet === t)));
+}
+function initTheme() {
+  document.querySelectorAll(".theme-menu .ti").forEach(s => s.innerHTML = THEME_ICON[s.dataset.icon]);
+  themePaint();
+  const menu = $("#themeMenu"), btn = $("#themeBtn");
+  const close = () => { menu.hidden = true; btn.setAttribute("aria-expanded", "false"); };
+  const place = () => { const r = btn.getBoundingClientRect(); menu.style.top = (r.bottom + 6) + "px"; menu.style.right = Math.max(8, document.documentElement.clientWidth - r.right) + "px"; };
+  btn.addEventListener("click", e => { e.stopPropagation(); place(); menu.hidden = !menu.hidden; btn.setAttribute("aria-expanded", String(!menu.hidden)); });
+  window.addEventListener("resize", () => { if (!menu.hidden) place(); });
+  window.addEventListener("scroll", () => { if (!menu.hidden) close(); }, {passive: true});
+  menu.addEventListener("click", e => { const b = e.target.closest("[data-theme-set]"); if (b) { themeApply(b.dataset.themeSet); close(); btn.focus(); } });
+  document.addEventListener("click", e => { if (!menu.hidden && !e.target.closest(".theme-wrap")) close(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && !menu.hidden) { close(); btn.focus(); } });
+}
+initTheme();
 async function initOfficial() {
   if (!OFF_ON) return;
   paintSigning(true);                          // shown right away; becomes the name, or the Sign in button if needed
