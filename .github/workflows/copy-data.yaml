@@ -1,0 +1,53 @@
+name: Copy data from the old repo (one time)
+
+# Run by hand. Copies every release file (obs-history, forecast-data, fdra-climo)
+# from the old repo into this repo. The old repo is only read, never changed.
+# Safe to run more than once: files with the same name are replaced with the newest copy.
+on:
+  workflow_dispatch:
+    inputs:
+      from_repo:
+        description: "Copy from"
+        default: "ZeinaAlzahawy-USDA/fems-r3"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fems-data
+  cancel-in-progress: false
+
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FROM: ${{ inputs.from_repo }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Copy each release
+        run: |
+          set -e
+          for tag in obs-history forecast-data fdra-climo; do
+            echo "== $tag"
+            rm -rf "dl/$tag" && mkdir -p "dl/$tag"
+            if ! gh release download "$tag" -R "$FROM" -D "dl/$tag"; then
+              echo "  $tag not found in $FROM, skipped"; continue
+            fi
+            title=$(gh release view "$tag" -R "$FROM" --json name -q .name)
+            gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "${title:-$tag}" --notes "Copied from $FROM"
+            gh release upload "$tag" dl/$tag/* --clobber
+            echo "  copied:"; ls -la "dl/$tag"
+          done
+
+      - name: Check the copies
+        run: |
+          for tag in obs-history forecast-data fdra-climo; do
+            echo "== $tag"
+            diff <(gh release view "$tag" -R "$FROM" --json assets -q '.assets[] | "\(.name) \(.size)"' | sort) \
+                 <(gh release view "$tag" --json assets -q '.assets[] | "\(.name) \(.size)"' | sort) \
+              && echo "  all files match" || { echo "  MISMATCH"; exit 1; }
+          done

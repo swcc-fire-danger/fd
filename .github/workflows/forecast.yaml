@@ -1,0 +1,56 @@
+name: FEMS Forecast Pull (NM+AZ)
+
+on:
+  workflow_dispatch:        # optional manual run
+  repository_dispatch:
+    types: [forecast-pull]
+
+permissions:
+  contents: write
+  actions: write        # lets this run start the website rebuild
+
+concurrency:
+  group: fems-data
+  cancel-in-progress: false
+
+jobs:
+  forecast-pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45         # a stuck run stops by itself; the next run catches up
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONUNBUFFERED: "1"     # show the script's messages in the log as they happen
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare (private code + Python)
+        uses: ./.github/actions/prepare
+        with:
+          code-key: ${{ secrets.CODE_DEPLOY_KEY }}
+
+      - name: Download existing forecast files from release
+        run: |
+          gh release download forecast-data -p 30days_forecast_hourly_weather.csv -D data || echo "30days_forecast_hourly_weather.csv not in release yet (first run)"
+          gh release download forecast-data -p 30days_forecast_hourly_nfdr.csv -D data || echo "30days_forecast_hourly_nfdr.csv not in release yet (first run)"
+          gh release download forecast-data -p history_forecast_daily_weather.csv -D data || echo "history_forecast_daily_weather.csv not in release yet (first run)"
+          gh release download forecast-data -p history_forecast_daily_nfdr.csv -D data || echo "history_forecast_daily_nfdr.csv not in release yet (first run)"
+
+      - name: Run forecast hourly pull
+        env:
+          FEMS_USERNAME: ${{ secrets.FEMS_USERNAME }}
+          FEMS_API_KEY: ${{ secrets.FEMS_API_KEY }}
+        run: python scripts/forecast_hourly.py
+
+      - name: Run forecast daily pull
+        env:
+          FEMS_USERNAME: ${{ secrets.FEMS_USERNAME }}
+          FEMS_API_KEY: ${{ secrets.FEMS_API_KEY }}
+        run: python scripts/forecast_daily.py
+
+      - name: Upload forecast files to release
+        run: |
+          gh release upload forecast-data data/30days_forecast_hourly_weather.csv data/30days_forecast_hourly_nfdr.csv data/history_forecast_daily_weather.csv data/history_forecast_daily_nfdr.csv --clobber
+
+      - name: Refresh the website
+        run: gh workflow run website.yaml

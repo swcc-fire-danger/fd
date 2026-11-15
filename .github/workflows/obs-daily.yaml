@@ -1,0 +1,59 @@
+name: FEMS Obs Daily MinMax (NM+AZ)
+
+on:
+  workflow_dispatch:        # optional manual run
+  repository_dispatch:
+    types: [obs-daily]
+
+permissions:
+  contents: write
+  actions: write        # lets this run start the website rebuild
+
+concurrency:
+  group: fems-data
+  cancel-in-progress: false
+
+jobs:
+  obs-daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45         # a stuck run stops by itself; the next run catches up
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONUNBUFFERED: "1"     # show the script's messages in the log as they happen
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare (private code + Python)
+        uses: ./.github/actions/prepare
+        with:
+          code-key: ${{ secrets.CODE_DEPLOY_KEY }}
+
+      - name: Download existing history from release
+        run: |
+          gh release download obs-history -p history_daily_weatherminmax.csv -D data || echo "history_daily_weatherminmax.csv not in release yet (first run)"
+          gh release download obs-history -p history_daily_nfdrminmax.csv -D data || echo "history_daily_nfdrminmax.csv not in release yet (first run)"
+          gh release download obs-history -p history_hourly_weather.csv -D data || echo "history_hourly_weather.csv not available yet — Max/Min VPD will be blank this run"
+
+      - name: Run obs daily minmax pull
+        env:
+          FEMS_USERNAME: ${{ secrets.FEMS_USERNAME }}
+          FEMS_API_KEY: ${{ secrets.FEMS_API_KEY }}
+        run: python scripts/obs_daily_minmax.py
+
+      - name: Upload history to release
+        run: |
+          gh release upload obs-history data/history_daily_weatherminmax.csv data/history_daily_nfdrminmax.csv --clobber
+
+      - name: Get the latest FDRA percentile history
+        run: gh release download fdra-climo -p r3_fdra_percentile_historical.csv -D data --clobber || echo "Using the percentile history in the repository"
+
+      - name: Build observed daily FDRA NFDR (saved to GitHub only; no ArcGIS upload)
+        run: python scripts/obs_nfdr_daily_fdra.py
+
+      - name: Upload daily FDRA output
+        run: |
+          gh release upload obs-history data/obs_nfdr_daily_fdra.csv --clobber
+
+      - name: Refresh the website
+        run: gh workflow run website.yaml

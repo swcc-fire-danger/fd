@@ -1,0 +1,48 @@
+name: FEMS Obs Hourly (NM+AZ)
+
+on:
+  workflow_dispatch:        # optional manual run
+  repository_dispatch:
+    types: [obs-hourly]
+
+permissions:
+  contents: write
+  actions: write        # lets this run start the website rebuild
+
+concurrency:
+  group: fems-data
+  cancel-in-progress: false
+
+jobs:
+  obs-hourly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30         # a stuck run stops by itself; the next hourly run catches up
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONUNBUFFERED: "1"     # show the script's messages in the log as they happen
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare (private code + Python)
+        uses: ./.github/actions/prepare
+        with:
+          code-key: ${{ secrets.CODE_DEPLOY_KEY }}
+
+      - name: Download existing history from release
+        run: |
+          gh release download obs-history -p history_hourly_weather.csv -D data || echo "history_hourly_weather.csv not in release yet (first run)"
+          gh release download obs-history -p history_hourly_nfdr.csv -D data || echo "history_hourly_nfdr.csv not in release yet (first run)"
+
+      - name: Run obs hourly pull
+        env:
+          FEMS_USERNAME: ${{ secrets.FEMS_USERNAME }}
+          FEMS_API_KEY: ${{ secrets.FEMS_API_KEY }}
+        run: python scripts/obs_hourly.py
+
+      - name: Upload history to release
+        run: |
+          gh release upload obs-history data/history_hourly_weather.csv data/history_hourly_nfdr.csv --clobber
+
+      - name: Refresh the website
+        run: gh workflow run website.yaml

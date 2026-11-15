@@ -1,0 +1,70 @@
+name: Website Build + Deploy
+
+# Started by each data workflow (Obs Hourly, Obs Daily, Forecast) as its last step,
+# right after it saves new data, so the site always shows the newest release files.
+# Can also be run by hand.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Own group: never blocks or waits on the fems-data pipeline
+concurrency:
+  group: website
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare (private code + Python)
+        uses: ./.github/actions/prepare
+        with:
+          code-key: ${{ secrets.CODE_DEPLOY_KEY }}
+
+      - name: Download release files (small ones only)
+        run: |
+          gh release download obs-history -D data --clobber \
+            -p history_daily_nfdrminmax.csv -p history_daily_weatherminmax.csv \
+            -p history_hourly_weather.csv -p obs_nfdr_daily_fdra.csv
+          gh release download forecast-data -D data --clobber \
+            -p history_forecast_daily_nfdr.csv -p history_forecast_daily_weather.csv
+          gh release download fdra-climo -D data --clobber -p r3_fdra_daily_climo.csv || echo "No FDRA history yet (charts show without Average/Max lines)"
+          gh release download fdra-climo -D data --clobber -p r3_fdra_percentile_historical.csv || echo "Using the percentile history in the repository"
+          gh release download fdra-climo -D data --clobber -p r3_fdra_percentile_extra.csv || echo "No SFDI/VPD/HDWI percentiles yet (re-run the one-time history workflow)"
+          gh release download fdra-climo -D data --clobber -p history_2005_2024_daily_erc_bi.csv || echo "No 2005-2024 daily history (7-day average percentiles left blank)"
+
+      - name: Build website data
+        run: python scripts/build_web_data.py
+
+      # Finishes ArcGIS group changes made on the Access Control page (skipped if the secrets are not set)
+      - name: Sync Access Control to ArcGIS groups
+        continue-on-error: true
+        env:
+          AGOL_CLIENT_ID: ${{ secrets.AGOL_CLIENT_ID }}
+          AGOL_REFRESH_TOKEN: ${{ secrets.AGOL_REFRESH_TOKEN }}
+        run: python scripts/sync_access.py
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
