@@ -680,10 +680,17 @@ table.cc td.na{background:var(--surface)!important;color:var(--ink-3)}
 .pctov .ctl select,.pctov .ctl input{font:inherit;font-size:13.5px;padding:5px 8px;border:1px solid var(--line-strong);border-radius:6px;background:var(--surface);color:var(--ink)}
 .pctov .ctl .btns{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
 table.cc td.fd{text-align:left}
-table.cc td.fd button{border:0;background:none;padding:0;color:inherit;font:inherit;font-weight:600;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+table.cc td.fd{color:var(--ink)}
+table.cc td.fd button{border:0;background:none;padding:0;color:var(--ink);font:inherit;font-weight:600;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
 #printArea{display:none}
 @media print{
-  @page{size:landscape;margin:8mm}
+  /* margin boxes replace the browser's own header/footer (which would show the hosting address) */
+  @page{size:landscape;margin:8mm 8mm 10mm;
+    @top-left{content:""} @top-right{content:""}
+    @bottom-left{content:"Southwest Fire Danger · https://experience.arcgis.com/experience/d3c28511deeb46e8bb9f551c4050850f";font:8pt Arial,sans-serif;color:#444}
+    @bottom-right{content:"Page " counter(page) " of " counter(pages);font:8pt Arial,sans-serif;color:#444}}
+  #printArea table.cc td.fd button{color:#000}
+  #printArea b,#printArea strong,#printArea .cc-meta *,#printArea .cc-notes *{color:#000!important}
   body.print-cc > *:not(#printArea){display:none!important}
   body.print-cc #printArea{display:block;color:#000;background:#fff}
   body.print-cc{background:#fff!important}
@@ -3267,6 +3274,9 @@ function startMap() {
   runLinkAction();
 })();
 /* ?cc=csv|pdf&f=<FDRA>&hl=..  or  ?cc=pctcsv|pctall|pctpdf&col=..&zone=..&q=..  (opened from Experience Builder) */
+/* this tab was opened only to download or print: close it afterwards so people stay in Experience Builder */
+function closeHelperTab(ms = 1500) { if (window.opener) setTimeout(() => window.close(), ms); }
+function closeAfterPrint() { addEventListener("afterprint", () => closeHelperTab(300), {once: true}); }
 async function runLinkAction() {
   const q = new URLSearchParams(location.search), a = q.get("cc"); if (!a) return;
   history.replaceState(null, "", location.pathname + location.hash);
@@ -3276,13 +3286,13 @@ async function runLinkAction() {
       await openClimateCard(k);
       const r = document.querySelector(`input[name="ccHl"][value="${CSS.escape(q.get("hl") || "")}"]`); if (r) { r.checked = true; ccPaint(); }
       if (!CLIMATE) return;
-      if (a === "csv") { ccCsv(); toast("Climate Card CSV downloaded."); } else setTimeout(ccPrint, 300);
+      if (a === "csv") { ccCsv(); toast("Climate Card CSV downloaded."); closeHelperTab(); } else { closeAfterPrint(); setTimeout(ccPrint, 300); }
     } else if (a.startsWith("pct")) {
       await loadClimate();
       pctOv.col = q.get("col") || pctOv.col; pctOv.zone = q.get("zone") || ""; pctOv.q = q.get("q") || "";
       paintPctOverview();
-      if (a === "pctcsv") pctCsv(false); else if (a === "pctall") pctCsv(true);
-      else { const c = CLIMATE.cols.find(x => x.k === pctOv.col) || CLIMATE.cols[0];
+      if (a === "pctcsv") { pctCsv(false); closeHelperTab(); } else if (a === "pctall") { pctCsv(true); closeHelperTab(); }
+      else { closeAfterPrint(); const c = CLIMATE.cols.find(x => x.k === pctOv.col) || CLIMATE.cols[0];
         setTimeout(() => printHtml(`<h3>Historical percentiles (${ccPeriod(CLIMATE)}) · ${esc(c.label)}${CC_UNITS[c.k] ? ` (${esc(CC_UNITS[c.k])})` : ""}</h3><div class="cc-meta">Southwest Fire Danger · ${pctOv.zone ? esc(zoneLabel(pctOv.zone)) : "All zones"} · FEMS data last processed ${esc(ccProcessed())}</div>` + pctOvTable(pctOvList(), c.k)), 300); }
       if (a !== "pctpdf") toast("CSV downloaded.");
     }
