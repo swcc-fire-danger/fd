@@ -730,6 +730,25 @@ table.cc thead th.l{text-align:left}
 .pctov .ctl select{font:inherit;font-size:13.5px;padding:6px 10px;border:1px solid var(--line-strong);border-radius:6px;background:var(--surface);color:var(--ink);min-width:150px}
 .pctov .ctl select#pctFdra{min-width:230px}
 .pctov .ctl .btns{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+/* Historical Percentiles page */
+.hp-phead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.hp .acc-head .btns{display:flex;gap:8px;flex-wrap:wrap}
+.hp .acc-tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--cc-pri)}
+.hp .acc-tabs button:hover{color:var(--ink)}
+.hp-tools{display:flex;flex-wrap:wrap;gap:12px 18px;align-items:flex-end;margin:4px 0 14px;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+.hp-f{display:flex;flex-direction:column;gap:5px}
+.hp-l{font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.hp-tools select{font:inherit;font-size:13.5px;padding:6px 10px;border:1px solid var(--line-strong);border-radius:6px;background:var(--surface);color:var(--ink);min-width:150px;height:33px}
+.hp-tools select#pctFdra{min-width:240px}
+.hp-tools .cc-seg span{padding:6px 13px;line-height:19px}
+.hp-count{margin-left:auto;font-size:12.5px;color:var(--ink-3);align-self:center}
+.hp-h{font-size:15px;margin:0 0 8px;color:var(--ink)}
+.hp .cc-wrap{overflow-x:auto;background:var(--surface)}
+table.cc td.c{text-align:center}
+table.cc.rk td{line-height:1.15;padding:3px 5px}
+table.cc.rk td small{display:block;font-size:10px;font-weight:600;opacity:.75}
+/* keep the page behind a Climate Card from scrolling */
+html.modal-open,html.modal-open body{overflow:hidden}
 #printArea{display:none}
 @media print{
   /* zero page margin: the browser has no room for its own header and footer (which would show the hosting address) */
@@ -762,6 +781,7 @@ table.cc thead th.l{text-align:left}
   #printArea .p-title h3{margin:0;font-size:14px;color:#fff}
   #printArea .p-title div{font-size:9px;color:#d5deea}
   #printArea table.cc td.fd button{color:#000;text-decoration:none}
+  #printArea table.cc.rk td small{font-size:7px}
   html,body{background:#fff!important}
   #printArea table.cc tr.sec th{font-size:7.5px;padding:2px 6px;border-top-width:1px}
   #printArea table.cc thead tr.grp th{font-size:8px}
@@ -889,6 +909,12 @@ footer.site-foot{margin-top:40px;background:var(--hdr-bg);border-top:4px solid #
     <div class="acc-tools"><input type="search" id="accHQ" placeholder="Search history" autocomplete="off"></div>
     <div class="tbl-scroll"><table class="acc-hist"><thead><tr><th>When</th><th>Done by</th><th>Change</th><th>Person</th><th>Access</th></tr></thead><tbody id="accHist"></tbody></table></div>
   </div>
+</section>
+<section class="wrap acc hp ccx" id="histPage" hidden aria-labelledby="hpTitle">
+  <button class="acc-back" id="hpBack" type="button">← Back to fire danger</button>
+  <div class="acc-head"><div><h2 id="hpTitle">Historical Percentiles</h2><p id="hpSub"></p></div><div class="btns" id="hpBtns"></div></div>
+  <div class="acc-tabs" role="tablist" id="hpRegion"></div>
+  <div id="hpBody"><div class="muted">Loading historical percentiles…</div></div>
 </section>
 
 <dialog id="accDlg" class="acc-dlg">
@@ -1836,11 +1862,11 @@ function stationLinks(ids) {
 function renderView() {
   const el = $("#reports");
   if (!state.zone) {               // leadership view
-    el.innerHTML = `<section class="panel"><div class="phead"><h2>Southwest fire danger outlook</h2>
+    el.innerHTML = `<section class="panel"><div class="phead hp-phead"><div><h2>Southwest fire danger outlook</h2>
         <div class="pmeta">${META.fdras.length} FDRAs across ${ZONES().length} zones. Select a zone above or a row below for details.</div></div>
-        ${legendHtml(null)}${stateBlocks()}</section>
-      <section class="panel pctov" id="pctOverview"><div class="muted">Loading historical percentiles…</div></section>`;
-    renderPctOverview();
+        <span class="ccx"><button class="btn primary" type="button" id="hpOpen" title="Historical percentiles and percentile rankings for every FDRA">${ICON_CHART}Historical Percentiles</button></span></div>
+        ${legendHtml(null)}${stateBlocks()}</section>`;
+    $("#hpOpen").onclick = openHist;
     return;
   }
   if (!state.fdra) {               // zone view
@@ -1882,7 +1908,7 @@ function renderView() {
 
 /* ---------------- FDRA Climate Card, hourly downloads, all-FDRA historical percentiles ---------------- */
 let CLIMATE = null, climateLoading = null;
-const pctOv = {col: "erc", zone: "", fdra: ""};
+const pctOv = {region: "", view: "pct", day: "today", col: "erc", zone: "", fdra: ""};
 function loadClimate() {
   if (CLIMATE) return Promise.resolve(CLIMATE);
   if (!climateLoading) climateLoading = fetch(CFG.dataUrl.replace(/meta\.json$/, "climate.json"), {cache: "no-cache"})
@@ -1999,7 +2025,7 @@ async function openClimateCard(key) {
   $("#ccSub").innerHTML = `Reporting stations: ${esc(ccStations(f))} · Fuel model ${esc(f.fuel_model)}`;
   $("#ccBody").innerHTML = `<div class="muted">Loading…</div>`;
   document.querySelector('input[name="ccHl"][value=""]').checked = true;
-  if (!$("#climDlg").open) $("#climDlg").showModal();
+  if (!$("#climDlg").open) { $("#climDlg").showModal(); document.documentElement.classList.add("modal-open"); }
   try { await loadClimate(); } catch (e) { $("#ccBody").innerHTML = `<div class="nodata">The climate card could not be loaded (${esc(e.message)}).</div>`; return; }
   ccPaint();
 }
@@ -2083,6 +2109,7 @@ function ccPrint() {
   printHtml(`${zoneLabel(f.zone)} ${f.name} FDRA Climate Card`, `Reporting stations: ${esc(ccStations(f))} · Fuel model ${esc(f.fuel_model)}`, ccCardHtml(f, CLIMATE, ccHl()));
 }
 $("#ccClose").onclick = () => $("#climDlg").close();
+$("#climDlg").addEventListener("close", () => document.documentElement.classList.remove("modal-open"));
 $("#climDlg").addEventListener("click", e => { if (e.target.id === "climDlg") $("#climDlg").close(); });
 document.querySelectorAll('input[name="ccHl"]').forEach(r => r.addEventListener("change", ccPaint));
 $("#ccCsv").onclick = () => CLIMATE && ccCur && ccCsv();
@@ -2104,76 +2131,139 @@ document.addEventListener("click", e => {          // hourly ZIP inside Experien
     .catch(() => { try { w.close(); } catch (x) {} toast("The hourly data could not be downloaded. Please try again later."); });
 });
 document.addEventListener("click", e => { const b = e.target.closest("[data-cc]"); if (b) { e.stopPropagation(); openClimateCard(b.dataset.cc); } });
-// ---- overview: historical percentiles for every FDRA ----
-async function renderPctOverview() {
-  const el = $("#pctOverview"); if (!el) return;
-  try { await loadClimate(); } catch (e) { el.innerHTML = `<div class="nodata">Historical percentiles could not be loaded (${esc(e.message)}).</div>`; return; }
-  if (!$("#pctOverview")) return;
-  paintPctOverview();
+// ---- Historical Percentiles page (opened from the Southwest overview) ----
+const ICON_CHART = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>`;
+const HP_REGIONS = [["", "Southwest"], ...STATE_GROUPS.map(g => [g[0], g[0]])];
+const HP_DAYS = [["today", "Today"], ["past7", "Past 7 days"], ["next7", "Next 7 days"]];
+async function openHist() {
+  $("main.wrap").hidden = true; $("#accessPage").hidden = true; $("#histPage").hidden = false; $("#drawer").classList.remove("show");
+  try { history.replaceState(null, "", "#percentiles"); } catch (e) {}
+  window.scrollTo(0, 0);
+  try { await loadClimate(); } catch (e) { $("#hpBody").innerHTML = `<div class="nodata">Historical percentiles could not be loaded (${esc(e.message)}).</div>`; return; }
+  paintHist();
 }
+function closeHist() {
+  if ($("#histPage").hidden) return;
+  $("#histPage").hidden = true; $("main.wrap").hidden = false;
+  setHash(); mapApi?.refresh();
+}
+$("#hpBack").onclick = closeHist;
 const pctSort = (a, b) => zoneLabel(a.zone).localeCompare(zoneLabel(b.zone)) || a.name.localeCompare(b.name);
-function pctOvAll() { return META.fdras.filter(f => !f.noData && CLIMATE.fdras[f.key] && (!pctOv.zone || f.zone === pctOv.zone)).sort(pctSort); }
+const hpRegionZones = () => { const g = STATE_GROUPS.find(x => x[0] === pctOv.region); return g ? g[1] : null; };
+function pctOvAll() {
+  const rz = hpRegionZones();
+  return META.fdras.filter(f => !f.noData && CLIMATE.fdras[f.key] && (!rz || rz.includes(f.zone)) && (!pctOv.zone || f.zone === pctOv.zone)).sort(pctSort);
+}
 function pctOvList() { return pctOvAll().filter(f => !pctOv.fdra || f.key === pctOv.fdra); }
 const pctCol = () => CLIMATE.cols.find(c => c.k === pctOv.col) || CLIMATE.cols[0];
 const pctColName = c => c.label + (CC_UNITS[c.k] ? ` (${CC_UNITS[c.k]})` : "");
+const hpDayLabel = () => { const d = HP_DAYS.find(x => x[0] === pctOv.day) || HP_DAYS[0], r = ccRecentRows(CLIMATE).find(x => x[0] === d[0]); return `${r[1]} (${r[2]})`; };
+function hpSelection() {
+  const f = pctOv.fdra && FDRA[pctOv.fdra];
+  return f ? `${zoneLabel(f.zone)} ${f.name}` : pctOv.zone ? `${zoneLabel(pctOv.zone)} zone` : pctOv.region || "Southwest (Arizona and New Mexico)";
+}
+// table 1: every FDRA's percentiles for one index
 function pctOvTable(list, k) {
   const C = CLIMATE, col = C.cols.find(c => c.k === k), P = C.pcts;
   return `<div class="cc-wrap"><table class="cc"><thead><tr><th class="l">Zone</th><th class="l">FDRA</th><th>Fuel Model</th>${C.rows.map(r => `<th>${esc(ccRowName(r))}</th>`).join("")}</tr></thead><tbody>` +
     list.map(f => { const t = C.fdras[f.key].table[k];
-      return `<tr><th>${esc(zoneLabel(f.zone))}</th><td class="txt fd"><button type="button" data-cc="${esc(f.key)}" title="Open the Climate Card for ${esc(f.name)}">${esc(f.name)}</button></td><td class="txt" style="text-align:center">${esc(f.fuel_model)}</td>` +
+      return `<tr><th>${esc(zoneLabel(f.zone))}</th><td class="txt fd"><button type="button" data-cc="${esc(f.key)}" title="Open the Climate Card for ${esc(f.name)}">${esc(f.name)}</button></td><td class="txt c">${esc(f.fuel_model)}</td>` +
         P.map((p, i) => { const v = t ? t[i] : null; if (v == null) return `<td class="na">–</td>`;
           const cl = ccClass(f, k, v, p); return `<td style="background:${cl ? cl.color : "transparent"}">${ccNum(v, col.dec)}</td>`; }).join("") + "</tr>"; }).join("") +
     `</tbody></table></div>`;
 }
+// table 2: every FDRA's current value and percentile rank for every index
+function hpRankTable(list, day) {
+  const C = CLIMATE, cols = C.cols;
+  const groups = []; cols.forEach(c => { const g = groups[groups.length - 1]; g && g.name === c.group ? g.n++ : groups.push({name: c.group, n: 1}); });
+  const first = new Set(); let prev = null; cols.forEach(c => { if (c.group !== prev) first.add(c.k); prev = c.group; });
+  const gs = k => first.has(k) ? "gs" : "";
+  return `<div class="cc-wrap"><table class="cc rk"><thead><tr class="grp"><th class="l" rowspan="2">Zone</th><th class="l" rowspan="2">FDRA</th><th rowspan="2">Fuel<br>Model</th>${groups.map(g => `<th colspan="${g.n}" class="gs">${esc(g.name)}</th>`).join("")}</tr>
+    <tr class="cols">${cols.map(c => `<th class="${gs(c.k)}">${esc(c.label)}${CC_UNITS[c.k] ? `<small>${esc(CC_UNITS[c.k])}</small>` : ""}</th>`).join("")}</tr></thead><tbody>` +
+    list.map(f => { const R = (C.fdras[f.key].recent || {})[day];
+      return `<tr><th>${esc(zoneLabel(f.zone))}</th><td class="txt fd"><button type="button" data-cc="${esc(f.key)}" title="Open the Climate Card for ${esc(f.name)}">${esc(f.name)}</button></td><td class="txt c">${esc(f.fuel_model)}</td>` +
+        cols.map(c => { const v = R && R.v[c.k], r = R && R.rank[c.k];
+          if (v == null) return `<td class="na ${gs(c.k)}">–</td>`;
+          const cl = ccClass(f, c.k, v, r);
+          return `<td class="${gs(c.k)}" style="background:${cl ? cl.color : "transparent"}">${ccNum(v, c.dec)}${r != null ? `<small>${ccOrd(r)}</small>` : ""}</td>`; }).join("") + "</tr>"; }).join("") +
+    `</tbody></table></div>`;
+}
 function pctNotes(col) {
+  const per = ccPeriod(CLIMATE);
+  if (pctOv.view === "rank") return `<div class="cc-notes"><div class="t">Notes</div><ul>
+    <li>Each cell shows the FDRA value (average of its reporting stations) and, below it, its percentile rank in the ${per} record.</li>
+    <li>Ranks are in fire danger order: for fuel moisture, relative humidity and GSI, a low value ranks high.</li>
+    <li>ERC and BI are colored using each FDRA's rating thresholds; all other columns are colored by percentile class.</li></ul></div>`;
   return `<div class="cc-notes"><div class="t">Notes</div><ul>
-    <li>Each column shows the value reached on that percentage of days in ${ccPeriod(CLIMATE)}, from daily values averaged across each FDRA's reporting stations.</li>
+    <li>Each column shows the value reached on that percentage of days in ${per}, from daily values averaged across each FDRA's reporting stations.</li>
     ${col.inv ? `<li>For ${esc(col.label)}, lower values indicate higher fire danger, so the columns are ordered by fire danger: the 90th column shows the value that only 10% of days were at or below.</li>` : ""}
     ${col.k === "erc" || col.k === "bi" ? `<li>${esc(col.label)} is colored using each FDRA's rating thresholds; FDRAs without thresholds are colored by percentile class.</li>` : `<li>Colors show the percentile class.</li>`}</ul></div>`;
 }
-function pctPrintHtml() {
-  const c = pctCol(), f = pctOv.fdra && FDRA[pctOv.fdra];
-  printHtml(`Historical Percentiles (${ccPeriod(CLIMATE)}) · ${pctColName(c)}`,
-    `${f ? esc(zoneLabel(f.zone) + " " + f.name) : pctOv.zone ? esc(zoneLabel(pctOv.zone)) + " zone" : "All zones"} · Data current as of ${esc(ccProcessed())}`,
-    pctOvTable(pctOvList(), c.k) + ccKeyHtml(false) + pctNotes(c));
+function hpTitle() {
+  return pctOv.view === "rank" ? `Current Percentile Rank · ${hpDayLabel()}` : `Historical Percentiles (${ccPeriod(CLIMATE)}) · ${pctColName(pctCol())}`;
 }
-function paintPctOverview() {
-  const el = $("#pctOverview"); if (!el || !CLIMATE) return;
-  el.classList.add("ccx");
-  const C = CLIMATE, col = pctCol(), all = pctOvAll();
+function hpTableHtml() { return pctOv.view === "rank" ? hpRankTable(pctOvList(), pctOv.day) : pctOvTable(pctOvList(), pctCol().k); }
+function pctPrintHtml() {
+  printHtml(hpTitle(), `${esc(hpSelection())} · Data current as of ${esc(ccProcessed())}`, hpTableHtml() + ccKeyHtml(false) + pctNotes(pctCol()));
+}
+function paintHist() {
+  if (!CLIMATE) return;
+  const C = CLIMATE, col = pctCol(), per = ccPeriod(C);
+  if (pctOv.zone && hpRegionZones() && !hpRegionZones().includes(pctOv.zone)) pctOv.zone = "";
+  const all = pctOvAll();
   if (pctOv.fdra && !all.some(f => f.key === pctOv.fdra)) pctOv.fdra = "";
-  const list = pctOvList();
-  const zones = ZONES().filter(z => BY_ZONE[z]);
+  const zones = ZONES().filter(z => BY_ZONE[z] && (!hpRegionZones() || hpRegionZones().includes(z)));
   const groups = [...new Set(C.cols.map(c => c.group))];
-  el.innerHTML = `<div class="phead"><h2>Historical Percentiles (${ccPeriod(C)})</h2>
-      <div class="pmeta">Historical percentiles for each FDRA, one index at a time. Select an FDRA name to open its Climate Card.</div></div>
-    <div class="ctl">
-      <label>Index<select id="pctCol">${groups.map(g => `<optgroup label="${esc(g)}">${C.cols.filter(c => c.group === g).map(c => `<option value="${c.k}"${c.k === col.k ? " selected" : ""}>${esc(pctColName(c))}</option>`).join("")}</optgroup>`).join("")}</select></label>
-      <label>Zone<select id="pctZone"><option value="">All zones</option>${zones.map(z => `<option value="${esc(z)}"${z === pctOv.zone ? " selected" : ""}>${esc(zoneLabel(z))}</option>`).join("")}</select></label>
-      <label>FDRA<select id="pctFdra"><option value="">All FDRAs${pctOv.zone ? ` in ${esc(zoneLabel(pctOv.zone))}` : ""}</option>${all.map(f => `<option value="${esc(f.key)}"${f.key === pctOv.fdra ? " selected" : ""}>${pctOv.zone ? "" : esc(zoneLabel(f.zone)) + " · "}${esc(f.name)}</option>`).join("")}</select></label>
-      <div class="btns">
-        <button class="btn" type="button" id="pctCsv" title="Download the table shown (${esc(pctColName(col))}) as a spreadsheet (CSV)">${ICON_DL}Export ${esc(col.label)} table (CSV)</button>
-        <button class="btn" type="button" id="pctCsvAll" title="Download every index for the FDRAs shown as one spreadsheet (CSV)">${ICON_DL}Export all indices (CSV)</button>
-        <button class="btn primary" type="button" id="pctPdf" title="Print the table shown or save it as a PDF">${ICON_PR}Print / Save as PDF</button></div></div>
-    <div id="pctTbl">${pctOvTable(list, col.k)}</div>
+  const rank = pctOv.view === "rank";
+  $("#hpTitle").textContent = `Historical Percentiles (${per})`;
+  $("#hpSub").textContent = `Historical percentiles and current percentile rankings for every FDRA. Data current as of ${ccProcessed()}.`;
+  $("#hpRegion").innerHTML = HP_REGIONS.map(([v, lab]) => `<button role="tab" type="button" data-hpregion="${esc(v)}" aria-selected="${pctOv.region === v}">${esc(lab)}</button>`).join("");
+  $("#hpBtns").innerHTML = `
+    <button class="btn" type="button" id="pctCsv" title="Download the table shown as a spreadsheet (CSV)">${ICON_DL}Export ${rank ? "table" : esc(col.label) + " table"} (CSV)</button>
+    ${rank ? "" : `<button class="btn" type="button" id="pctCsvAll" title="Download every index for the FDRAs shown as one spreadsheet (CSV)">${ICON_DL}Export all indices (CSV)</button>`}
+    <button class="btn primary" type="button" id="pctPdf" title="Print the table shown or save it as a PDF">${ICON_PR}Print / Save as PDF</button>`;
+  $("#hpBody").innerHTML = `
+    <div class="hp-tools">
+      <div class="hp-f"><span class="hp-l">View</span><div class="cc-seg" role="radiogroup" aria-label="View">
+        <label><input type="radio" name="hpView" value="pct"${rank ? "" : " checked"}><span>Historical percentiles</span></label>
+        <label><input type="radio" name="hpView" value="rank"${rank ? " checked" : ""}><span>Current percentile rank</span></label></div></div>
+      ${rank ? `<div class="hp-f"><span class="hp-l">Period</span><div class="cc-seg" role="radiogroup" aria-label="Period">${HP_DAYS.map(([v, lab]) => `<label><input type="radio" name="hpDay" value="${v}"${pctOv.day === v ? " checked" : ""}><span>${lab}</span></label>`).join("")}</div></div>`
+        : `<label class="hp-f"><span class="hp-l">Index</span><select id="pctCol">${groups.map(g => `<optgroup label="${esc(g)}">${C.cols.filter(c => c.group === g).map(c => `<option value="${c.k}"${c.k === col.k ? " selected" : ""}>${esc(pctColName(c))}</option>`).join("")}</optgroup>`).join("")}</select></label>`}
+      <label class="hp-f"><span class="hp-l">Zone</span><select id="pctZone"><option value="">All zones</option>${zones.map(z => `<option value="${esc(z)}"${z === pctOv.zone ? " selected" : ""}>${esc(zoneLabel(z))}</option>`).join("")}</select></label>
+      <label class="hp-f"><span class="hp-l">FDRA</span><select id="pctFdra"><option value="">All FDRAs${pctOv.zone ? ` in ${esc(zoneLabel(pctOv.zone))}` : ""}</option>${all.map(f => `<option value="${esc(f.key)}"${f.key === pctOv.fdra ? " selected" : ""}>${pctOv.zone ? "" : esc(zoneLabel(f.zone)) + " · "}${esc(f.name)}</option>`).join("")}</select></label>
+      <span class="hp-count">${pctOvList().length} FDRA${pctOvList().length === 1 ? "" : "s"}</span>
+    </div>
+    <h3 class="hp-h">${esc(hpTitle())}</h3>
+    ${hpTableHtml()}
     ${ccKeyHtml(false)}${pctNotes(col)}`;
-  $("#pctCol").onchange = e => { pctOv.col = e.target.value; paintPctOverview(); };
-  $("#pctZone").onchange = e => { pctOv.zone = e.target.value; pctOv.fdra = ""; paintPctOverview(); };
-  $("#pctFdra").onchange = e => { pctOv.fdra = e.target.value; paintPctOverview(); };
+  document.querySelectorAll("[data-hpregion]").forEach(b => b.onclick = () => { pctOv.region = b.dataset.hpregion; pctOv.zone = ""; pctOv.fdra = ""; paintHist(); });
+  document.querySelectorAll('input[name="hpView"]').forEach(r => r.onchange = () => { pctOv.view = r.value; paintHist(); });
+  document.querySelectorAll('input[name="hpDay"]').forEach(r => r.onchange = () => { pctOv.day = r.value; paintHist(); });
+  if ($("#pctCol")) $("#pctCol").onchange = e => { pctOv.col = e.target.value; paintHist(); };
+  $("#pctZone").onchange = e => { pctOv.zone = e.target.value; pctOv.fdra = ""; paintHist(); };
+  $("#pctFdra").onchange = e => { pctOv.fdra = e.target.value; paintHist(); };
   $("#pctCsv").onclick = () => pctCsv(false);
-  $("#pctCsvAll").onclick = () => pctCsv(true);
+  if ($("#pctCsvAll")) $("#pctCsvAll").onclick = () => pctCsv(true);
   $("#pctPdf").onclick = () => pctPrintHtml();
 }
 function pctCsv(all) {
-  const C = CLIMATE, list = pctOvList(), cols = all ? C.cols : [pctCol()], f = pctOv.fdra && FDRA[pctOv.fdra];
-  const L = [[`Historical Percentiles (${ccPeriod(C)}) - Southwest Fire Danger`], ["Data source", "Fire Environment Mapping System (FEMS)"], ["Data current as of", ccProcessed()],
-    ["Selection", f ? `${zoneLabel(f.zone)} ${f.name}` : pctOv.zone ? `${zoneLabel(pctOv.zone)} zone` : "All zones"],
-    ["Note", "For fuel moisture, relative humidity and GSI, lower values indicate higher fire danger; these columns are ordered by fire danger."], [],
-    ["Zone", "FDRA", "Fuel model", "Index", ...C.rows.map(ccRowName)]];
+  const C = CLIMATE, list = pctOvList(), per = ccPeriod(C);
+  const L = [[`${pctOv.view === "rank" ? "Current Percentile Rank" : `Historical Percentiles (${per})`} - Southwest Fire Danger`], ["Data source", "Fire Environment Mapping System (FEMS)"],
+    ["Data current as of", ccProcessed()], ["Selection", hpSelection()]];
+  if (pctOv.view === "rank") {
+    L.push(["Period", hpDayLabel()], ["Note", `Percentile rank is in the ${per} record, in fire danger order (for fuel moisture, relative humidity and GSI a low value ranks high).`], [],
+      ["Zone", "FDRA", "Fuel model", ...C.cols.flatMap(c => [pctColName(c), `${c.label} percentile rank`])]);
+    list.forEach(f => { const R = (C.fdras[f.key].recent || {})[pctOv.day];
+      L.push([zoneLabel(f.zone), f.name, f.fuel_model, ...C.cols.flatMap(c => [R ? R.v[c.k] : "", R ? R.rank[c.k] : ""])]); });
+    return downloadCsv(`Current_Percentile_Rank_${fileSafe(HP_DAYS.find(x => x[0] === pctOv.day)[1])}.csv`, L);
+  }
+  const cols = all ? C.cols : [pctCol()];
+  L.push(["Note", "For fuel moisture, relative humidity and GSI, lower values indicate higher fire danger; these columns are ordered by fire danger."], [],
+    ["Zone", "FDRA", "Fuel model", "Index", ...C.rows.map(ccRowName)]);
   list.forEach(f => cols.forEach(c => { const t = C.fdras[f.key].table[c.k];
     L.push([zoneLabel(f.zone), f.name, f.fuel_model, pctColName(c), ...(t || C.rows.map(() => ""))]); }));
-  const per = ccPeriod(C).replace("–", "-");
-  downloadCsv(all ? `Historical_Percentiles_${per}_all_indices.csv` : `Historical_Percentiles_${per}_${fileSafe(cols[0].label)}.csv`, L);
+  const p2 = per.replace("–", "-");
+  downloadCsv(all ? `Historical_Percentiles_${p2}_all_indices.csv` : `Historical_Percentiles_${p2}_${fileSafe(cols[0].label)}.csv`, L);
 }
 function renderAll() {
   renderTabs(); renderCrumbs(); renderView();
@@ -2187,7 +2277,7 @@ function setHash() {
   try { history.replaceState(null, "", h ? "#" + encodeURIComponent(h).replace("%2F", "/") : location.pathname + location.search); } catch (e) {}
 }
 function go(zone, fdra, {zoom = true} = {}) {
-  closeAccess();
+  closeAccess(); closeHist();
   closeZoneMenu();
   state.zone = zone || null; state.fdra = fdra || null;
   renderAll(); setHash();
@@ -2848,7 +2938,7 @@ function accPaintPending() {
 }
 async function openAccess() {
   if (!canManageAnyone()) return;
-  $("main.wrap").hidden = true; $("#accessPage").hidden = false; $("#drawer").classList.remove("show");
+  $("main.wrap").hidden = true; $("#histPage").hidden = true; $("#accessPage").hidden = false; $("#drawer").classList.remove("show");
   try { history.replaceState(null, "", "#access"); } catch (e) {}
   window.scrollTo(0, 0);
   $("#accSub").textContent = isAdminMgr(ME()) ? "You can give any access in the Southwest, including managers."
@@ -3417,6 +3507,7 @@ function startMap() {
   state.fdra = (state.zone && hf && BY_ZONE[state.zone].find(f => f.slug === hf)?.key) || null;
   renderAll(); renderLegend();
   if (state.zone && window.innerWidth >= 900) openPanelForState();   // a shared link to a zone or FDRA opens its popup too
+  if (location.hash === "#percentiles") openHist();
   startMap();
   initOfficial();
   runLinkAction();
@@ -3435,13 +3526,6 @@ async function runLinkAction() {
       const r = document.querySelector(`input[name="ccHl"][value="${CSS.escape(q.get("hl") || "")}"]`); if (r) { r.checked = true; ccPaint(); }
       if (!CLIMATE) return;
       if (a === "csv") { ccCsv(); toast("Climate Card CSV downloaded."); closeHelperTab(); } else { closeAfterPrint(); setTimeout(ccPrint, 300); }
-    } else if (a.startsWith("pct")) {
-      await loadClimate();
-      pctOv.col = q.get("col") || pctOv.col; pctOv.zone = q.get("zone") || ""; pctOv.fdra = q.get("fdra") || "";
-      paintPctOverview();
-      if (a === "pctcsv") { pctCsv(false); toast("CSV downloaded."); closeHelperTab(); }
-      else if (a === "pctall") { pctCsv(true); toast("CSV downloaded."); closeHelperTab(); }
-      else { closeAfterPrint(); setTimeout(pctPrintHtml, 300); }
     }
   } catch (e) { toast("Could not prepare the file: " + e.message); }
 }
