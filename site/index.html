@@ -1198,8 +1198,9 @@ function endSession(msg) {
   ["#editDlg", "#accDlg", "#noteDlg"].forEach(id => { const d = $(id); if (d && d.open) d.close(); });
   if (!$("#accessPage").hidden) closeAccess();
   $("#adminBtn").hidden = true;
+  auth.inLeaders = false; auth.inUsers = false;
   paintWho(); paintSigning(false);
-  redrawOfficial();
+  redrawOfficial(); paintDataAccess();
   if (msg) toast(msg);
 }
 const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -1271,6 +1272,7 @@ async function startSession(tk) {
   const ag = groups.find(g => g.id === OFF.adminsGroup);
   auth.manager = !!ag && ["owner", "admin"].includes(ag.userMembership?.memberType);
   auth.inLeaders = gids.includes(OFF.leadersGroup);
+  auth.inUsers = gids.includes(OFF.pilotGroup);
   ss.set("fdo_tk", JSON.stringify(tk));
   clearTimeout(renewTimer);
   if (tk.exp) renewTimer = setTimeout(renewSession, Math.max(10000, tk.exp - Date.now()));
@@ -1281,6 +1283,7 @@ async function startSession(tk) {
   SVC.leaders = await resolveTable(OFF.leadersItem).catch(() => null);
   $("#signInBtn").hidden = true;
   paintWho();
+  paintDataAccess();
 }
 /* ---- light / dark switch ---- */
 const THEME_ICON = {
@@ -1864,9 +1867,9 @@ function renderView() {
   if (!state.zone) {               // leadership view
     el.innerHTML = `<section class="panel"><div class="phead hp-phead"><div><h2>Southwest fire danger outlook</h2>
         <div class="pmeta">${META.fdras.length} FDRAs across ${ZONES().length} zones. Select a zone above or a row below for details.</div></div>
-        <span class="ccx"><button class="btn primary" type="button" id="hpOpen" title="Historical percentiles and percentile rankings for every FDRA">${ICON_CHART}Historical Percentiles</button></span></div>
+        ${canUseData() ? `<span class="ccx"><button class="btn primary" type="button" id="hpOpen" title="Historical percentiles and percentile rankings for every FDRA">${ICON_CHART}Historical Percentiles</button></span>` : ""}</div>
         ${legendHtml(null)}${stateBlocks()}</section>`;
-    $("#hpOpen").onclick = openHist;
+    if ($("#hpOpen")) $("#hpOpen").onclick = openHist;
     return;
   }
   if (!state.fdra) {               // zone view
@@ -1902,7 +1905,7 @@ function renderView() {
         <button data-range="90" aria-pressed="${chartRange === "90"}">Last 90 days</button></div>
 </div>
       <div class="charts" id="charts"><div class="muted">Loading charts…</div></div></section>
-    ${climatePanel(f)}`;
+    ${canUseData() ? climatePanel(f) : ""}`;
   loadCharts(f);
 }
 
@@ -2019,7 +2022,7 @@ function ccCardHtml(f, C, hl) {
 }
 let ccCur = null;
 async function openClimateCard(key) {
-  const f = FDRA[key]; if (!f) return;
+  const f = FDRA[key]; if (!f || !canUseData()) return;
   ccCur = key;
   $("#ccTitle").textContent = `${zoneLabel(f.zone)} ${f.name} FDRA Climate Card`;
   $("#ccSub").innerHTML = `Reporting stations: ${esc(ccStations(f))} · Fuel model ${esc(f.fuel_model)}`;
@@ -2135,7 +2138,23 @@ document.addEventListener("click", e => { const b = e.target.closest("[data-cc]"
 const ICON_CHART = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>`;
 const HP_REGIONS = [["", "Southwest"], ...STATE_GROUPS.map(g => [g[0], g[0]])];
 const HP_DAYS = [["today", "Today"], ["past7", "Past 7 days"], ["next7", "Next 7 days"]];
+/* Climate Cards, Historical Percentiles and data downloads: Users and above (not Guests, not signed out).
+   Users, leaders and admins are all in the Users group; the owner and admins are also recognized directly. */
+function canUseData() {
+  return !!auth.user && !!(auth.inUsers || auth.inLeaders || auth.admin || isRoot(auth.user) || SVC.ratingsView);
+}
+let dataAccessShown = null;
+function paintDataAccess() {
+  const ok = canUseData();
+  if (!ok) {
+    if ($("#climDlg").open) $("#climDlg").close();
+    closeHist();
+  }
+  if (ok !== dataAccessShown) { dataAccessShown = ok; if (META) renderView(); }
+  if (ok && location.hash === "#percentiles" && $("#histPage").hidden) openHist();
+}
 async function openHist() {
+  if (!canUseData()) return;
   $("main.wrap").hidden = true; $("#accessPage").hidden = true; $("#histPage").hidden = false; $("#drawer").classList.remove("show");
   try { history.replaceState(null, "", "#percentiles"); } catch (e) {}
   window.scrollTo(0, 0);
@@ -3507,7 +3526,7 @@ function startMap() {
   state.fdra = (state.zone && hf && BY_ZONE[state.zone].find(f => f.slug === hf)?.key) || null;
   renderAll(); renderLegend();
   if (state.zone && window.innerWidth >= 900) openPanelForState();   // a shared link to a zone or FDRA opens its popup too
-  if (location.hash === "#percentiles") openHist();
+  if (location.hash === "#percentiles") openHist();   // opens once sign-in confirms access (see paintDataAccess)
   startMap();
   initOfficial();
   runLinkAction();
