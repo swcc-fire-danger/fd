@@ -666,13 +666,13 @@ dialog.cc-dlg::backdrop{background:rgba(1,24,48,.55)}
 .cc-head .x:hover{background:rgba(255,255,255,.12)}
 .cc-body{flex:1 1 auto;min-height:0;overflow:auto;padding:0 18px 14px}
 .cc-body > :first-child{margin-top:14px}
-.cc-foot{flex:none;display:flex;flex-wrap:wrap;gap:12px 16px;align-items:center;padding:10px 18px;border-top:1px solid var(--line);background:var(--surface-2)}
+.cc-foot{flex:none;display:flex;flex-wrap:wrap;gap:12px 16px;align-items:flex-end;padding:10px 18px;border-top:1px solid var(--line);background:var(--surface-2)}
 .cc-foot .lbl{font-size:13px;font-weight:650;color:var(--ink-2)}
 .cc-foot .btns{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
 .cc-seg{display:inline-flex;border:1px solid var(--line-strong);border-radius:8px;overflow:hidden;background:var(--surface)}
-.cc-seg label{position:relative;display:block}
+.cc-seg label{position:relative;display:block;margin:0!important;padding:0}
 .cc-seg input{position:absolute;opacity:0;pointer-events:none}
-.cc-seg span{display:block;padding:6px 14px;font-size:13px;font-weight:600;cursor:pointer;border-left:1px solid var(--line);color:var(--ink-2);user-select:none}
+.cc-seg span{display:block;padding:6px 13px;line-height:19px;font-size:13px;font-weight:600;cursor:pointer;border-left:1px solid var(--line);color:var(--ink-2);user-select:none}
 .cc-seg label:first-child span{border-left:0}
 .cc-seg label:hover span{background:var(--cc-hover);color:var(--cc-hover-ink)}
 .cc-seg input:checked+span{background:var(--cc-pri);color:#fff}
@@ -740,7 +740,6 @@ table.cc thead th.l{text-align:left}
 .hp-l{font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
 .hp-tools select{font:inherit;font-size:13.5px;padding:6px 10px;border:1px solid var(--line-strong);border-radius:6px;background:var(--surface);color:var(--ink);min-width:150px;height:33px}
 .hp-tools select#pctFdra{min-width:240px}
-.hp-tools .cc-seg span{padding:6px 13px;line-height:19px}
 .hp-count{margin-left:auto;font-size:12.5px;color:var(--ink-3);align-self:center}
 .hp-h{font-size:15px;margin:0 0 8px;color:var(--ink)}
 .hp .cc-wrap{overflow-x:auto;background:var(--surface)}
@@ -973,12 +972,12 @@ footer.site-foot{margin-top:40px;background:var(--hdr-bg);border-top:4px solid #
     <button class="x" type="button" id="ccClose" aria-label="Close">×</button></div>
   <div class="cc-body" id="ccBody"></div>
   <div class="cc-foot">
-    <span class="lbl" id="ccHlLbl">Highlight percentile band</span>
+    <div class="hp-f"><span class="hp-l" id="ccHlLbl">Highlight percentile band</span>
     <div class="cc-seg" role="radiogroup" aria-labelledby="ccHlLbl">
       <label><input type="radio" name="ccHl" value="" checked><span>None</span></label>
       <label><input type="radio" name="ccHl" value="today"><span>Today</span></label>
       <label><input type="radio" name="ccHl" value="past7"><span>Past 7 days</span></label>
-      <label><input type="radio" name="ccHl" value="next7"><span>Next 7 days</span></label></div>
+      <label><input type="radio" name="ccHl" value="next7"><span>Next 7 days</span></label></div></div>
     <div class="btns"><button class="btn" type="button" id="ccCsv" title="Download this Climate Card as a spreadsheet (CSV)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M4 19h16"/></svg>Export to Excel (CSV)</button><button class="btn primary" type="button" id="ccPdf" title="Print this Climate Card or save it as a PDF"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2M7 14h10v7H7z"/></svg>Print / Save as PDF</button></div>
   </div>
 </dialog>
