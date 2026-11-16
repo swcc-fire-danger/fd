@@ -363,7 +363,13 @@ dialog#noteDlg{width:min(520px,calc(100vw - 24px));padding:0;overflow:hidden}
 .acc-head p{margin:4px 0 0;font-size:13.5px;color:var(--ink-2)}
 .acc-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 14px;border-radius:8px;background:#fff4e5;color:#7a4300;border:1px solid #f3d19c;border-left:4px solid #d98a1c;margin-bottom:12px;font-size:13.5px}
 .acc-banner ul{margin:4px 0 0;padding-left:18px}
-.acc-banner li{margin:2px 0}
+.acc-limit{display:flex;flex-direction:column;gap:2px;margin-top:6px;padding:7px 10px;border-radius:6px;background:#fff4e5;border:1px solid #f3d19c;border-left:4px solid #d98a1c;color:#7a4300;font-size:12px;line-height:1.4;max-width:520px;white-space:normal}
+.acc-limit > b{font-size:12.5px;display:block}
+.acc-p .who .acc-limit span b{display:inline;font-size:inherit;margin-right:3px}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .acc-limit{background:#2e2414;color:#f3d6a8;border-color:#5c4520;border-left-color:#d98a1c}}
+:root[data-theme="dark"] .acc-limit{background:#2e2414;color:#f3d6a8;border-color:#5c4520;border-left-color:#d98a1c}
+.acc-banner li{margin:2px 0 8px}
+.acc-cc{display:flex;flex-direction:column;gap:2px;margin-top:3px;font-size:13px}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .acc-banner{background:#2e2414;color:#f3d6a8;border-color:#5c4520;border-left-color:#d98a1c}}
 :root[data-theme="dark"] .acc-banner{background:#2e2414;color:#f3d6a8;border-color:#5c4520;border-left-color:#d98a1c}
 .acc-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:12px}
@@ -2982,6 +2988,14 @@ async function promoteRetry(id, user) {
   }
 }
 let groupFails = new Map();   // username -> ArcGIS reason, from the last attempt
+// ArcGIS refused the manager role because of the person's account role: they stay a member (ratings still work)
+const acctLimited = u => /privileges to be a group admin/i.test(groupFails.get(norm(u)) || "");
+function ratingScopeText(p) {
+  const gs = [...(p.grants || new Map()).values()];
+  if (gs.some(g => g.base === "All Zones" || g.base === "Admin")) return "every FDRA in the Southwest";
+  const zones = gs.filter(g => g.base === "Zone Leader").map(g => zoneLabel(g.zone)), fdras = gs.filter(g => g.base === "FDRA Leader" && g.fdra).map(g => g.fdra);
+  return [...zones.map(z => `every FDRA in ${z}`), ...fdras].join(", ") || "the FDRAs in their access";
+}
 async function applyTodo(todo) {
   let done = 0, failed = 0, why = "";
   todo.forEach(t => groupFails.delete(t.u));
@@ -3026,12 +3040,16 @@ function accPaintPending() {
   if (!(isRoot(ME()) || isAdminMgr(ME())) || !MEMBERS) { el.hidden = true; return; }
   const n = groupTodo().length;
   el.hidden = !n;
-  if (n) {
-    const people = [...new Set(groupTodo().map(t => t.u))];
+  const people = [...new Set(groupTodo().map(t => t.u))].filter(u => !acctLimited(u));   // account limits are shown in the person's row
+  el.hidden = !people.length;
+  if (people.length) {
     const line = u => {
       const name = (ACCESS.get(u) || {}).name || u, why = groupFails.get(u) || "";
       return /privileges to be a group admin/i.test(why)
-        ? `<li><b>${esc(name)}</b>: this person's ArcGIS account is not allowed to be a group manager. A NIFC ArcGIS administrator must change the account's role, or use <b>Edit current access</b> to make this person a Member.</li>`
+        ? `<li><b>${esc(name)}</b>: ArcGIS does not allow this account to be a group manager.
+             <div class="acc-cc"><span><b>Can:</b> sign in, see everything, and set official ratings for their assigned FDRAs.</span>
+             <span><b>Can't:</b> add, edit or remove people in Access Control.</span>
+             <span><b>To fix:</b> a NIFC ArcGIS administrator changes this account's role to one that can manage groups. This page then finishes the change automatically.</span></div></li>`
         : `<li><b>${esc(name)}</b>: group membership could not be updated${why ? ` (ArcGIS: ${esc(why)})` : ""}.</li>`;
     };
     el.innerHTML = `<div><b>Group membership needs attention</b><ul>${people.map(line).join("")}</ul></div><button class="btn" id="accApply" type="button">Try again</button>`;
@@ -3053,7 +3071,7 @@ async function openAccess() {
   await loadLeaders();
   if (needGroups && Date.now() - membersAt > 60000) await loadMembers();   // quiet refresh, then redraw in place
   accRender();
-  if (isRoot(ME()) || isAdminMgr(ME())) { const t = groupTodo(); if (t.length) { const r = await applyTodo(t); lastGroupWhy = r.why || ""; accPaintPending(); } }   // finish waiting group changes automatically
+  if (isRoot(ME()) || isAdminMgr(ME())) { const t = groupTodo(); if (t.length) { const r = await applyTodo(t); lastGroupWhy = r.why || ""; accRender(); } }   // finish waiting group changes automatically
 }
 // placeholder rows while the people list loads (keeps the page from jumping)
 function accSkeleton() {
@@ -3140,7 +3158,12 @@ function accRender() {
   $("#accRows").innerHTML = rows.map(p => {
     const gs = [...p.grants.values()].sort((a, b) => LEVELS.indexOf(b.base) - LEVELS.indexOf(a.base));
     const anyRm = gs.length > 0 && gs.every(g => mayChange(ME(), g, true));   // only people fully inside what this person manages
-    return `<div class="acc-p"><div class="who"><b>${esc(cleanName(p.name))}</b><small>${esc(p.user)}</small></div>
+    const refused = acctLimited(p.user);
+    return `<div class="acc-p"><div class="who"><b>${esc(cleanName(p.name))}</b><small>${esc(p.user)}</small>${refused ? `<div class="acc-limit" title="ArcGIS: User does not have privileges to be a group admin.">
+        <b>ArcGIS account limit</b>
+        <span><b>Can:</b> set official ratings for ${esc(ratingScopeText(p))}.</span>
+        <span><b>Can't:</b> add, edit or remove people (ArcGIS does not allow this account to be a group manager).</span>
+        <span><b>To fix:</b> a NIFC ArcGIS administrator changes the account's role. This page then completes the manager role automatically.</span></div>` : ""}</div>
       <div class="chips">${isRoot(p.user) ? `<span class="acc-chip adm ro">Owner<span class="m">Manager</span></span>` : ""}${gs.map(chipHtml).join("") || (isRoot(p.user) ? "" : `<span class="acc-chip view ro">${p.guest ? "Guest" : "User"} · added in ArcGIS</span>`)}</div>
       <div class="acts">${accActs(p, gs, anyRm)}</div></div>`;
   }).join("") || `<div class="acc-empty">No one matches these filters.</div>`;
@@ -3262,7 +3285,8 @@ async function accAfterChange(user, msg, edited) {
   if (MEMBERS || canManageAnyone()) {      // anyone who can add people also manages the groups they add to
     if (!MEMBERS) await loadMembers();
     const r = await applyTodo(groupTodo(user, edited)); lastGroupWhy = r.why || "";
-    if (r.failed) { toast(`${msg} · ${r.failed} group change${r.failed === 1 ? "" : "s"} could not be made${r.why ? ": " + r.why : ""}`); accRender(); await loadRatings(); renderAll(); mapApi?.refresh(); return; }
+    if (r.failed && [...new Set(groupTodo(user, edited).map(t => t.u))].every(acctLimited)) { toast(`${msg} Added as a group member: their ArcGIS account can't be a group manager. Official ratings work (see the note in their row).`); accRender(); await loadRatings(); renderAll(); mapApi?.refresh(); return; }
+    if (r.failed) { toast( `${msg} · ${r.failed} group change${r.failed === 1 ? "" : "s"} could not be made${r.why ? ": " + r.why : ""}`); accRender(); await loadRatings(); renderAll(); mapApi?.refresh(); return; }
   }
   toast(msg); accRender(); await loadRatings(); renderAll(); mapApi?.refresh();
 }
