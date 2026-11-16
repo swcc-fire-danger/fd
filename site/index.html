@@ -1929,7 +1929,7 @@ const ccShort = iso => iso ? new Date(iso + "T12:00:00").toLocaleDateString("en-
 const ccDay = iso => iso ? new Date(iso + "T12:00:00").toLocaleDateString("en-US", {weekday: "short", month: "short", day: "numeric"}) : "";
 // class of a value: the FDRA's own planner numbers for ERC/BI when it has them, else the danger percentile of the row
 /* Each FDRA's own percentile ranges: its ERC rating thresholds expressed as percentiles of its own history.
-   FDRAs without thresholds (rated by VPD x SFDI) use the standard percentile classes. */
+   FDRAs without thresholds use the standard percentile classes. */
 const fdraRanges = f => {
   const r = f && f.planner && f.planner.pct_ranges && f.planner.pct_ranges.erc;
   return r && r.length === CLASSES.length && r.every(Boolean) ? r : null;
@@ -1952,13 +1952,13 @@ function ccClass(f, k, v, dangerPct) {
   }
   return fdraClassForPct(f, dangerPct);
 }
-/* the official calculated rating (same as the main outlook table): FDRA matrix / thresholds, or VPD x SFDI */
+/* the calculated rating from FEMS data (same calculation as the main outlook table) */
 function ccRating(f, which) {
   const lab = {past7: "7-Day Observed", today: "Today", next7: "7-Day Forecast"}[which];
   const row = (rowsOf(f) || []).find(r => r.label === lab);
   return row ? fdOf(row.values).cls : null;
 }
-const ccMethodName = f => f.planner ? (f.planner.grid ? `ERC-${f.fuel_model} × BI-${f.fuel_model} rating matrix` : `ERC-${f.fuel_model} rating thresholds`) : "VPD × SFDI rating matrix";
+const ccMethodName = f => f.planner ? (f.planner.grid ? `ERC-${f.fuel_model} × BI-${f.fuel_model} rating matrix` : `ERC-${f.fuel_model} rating thresholds`) : "the standard calculation";
 function ccProcessed() {
   const g = new Date(META.fems_pulled_utc || META.generated_utc);
   return g.toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit", timeZone: "America/Phoenix"}) + " MST " +
@@ -1971,7 +1971,7 @@ function ccBreakpoints(f) {
     return `<span class="c" style="background:${c.color}">${esc(c.name)} ${t}</span>`; }).join("") + `</div>`;
   if (pm) return [line(`ERC-${f.fuel_model}`, pm.erc), pm.bi ? line(`BI-${f.fuel_model}`, pm.bi) : ""].join("")
     + (pm.window > 1 ? `<div>Ratings are based on the ${pm.window}-day average of ${pm.bi ? "ERC and BI" : "ERC"}.</div>` : "");
-  return `<div>Rated by VPD × SFDI using this FDRA's ${ccPeriod(CLIMATE)} percentile classes.</div>`;
+  return `<div>No FDRA-specific rating thresholds. Standard percentile classes are used.</div>`;
 }
 function ccStations(f) { return f.sig_raws.map(id => `${titleCase(STATIONS[id]?.name || id)} (${id})`).join(", "); }
 const ccFull = iso => iso ? new Date(iso + "T12:00:00").toLocaleDateString("en-US", {weekday: "long", month: "long", day: "numeric", year: "numeric"}) : "";
@@ -2024,8 +2024,8 @@ function ccTableHtml(f, C, hl) {
 }
 function ccKeyHtml(withOutline, f) {
   const own = f && fdraRanges(f), txt = f ? fdraRangeText(f) : CLASSES.map(c => `${ccOrd(c.min)}–${ccOrd(c.max)}`);
-  const title = !f ? "Legend: standard percentile classes" : own ? `Legend: ${f.name} percentile ranges (from its ERC-${f.fuel_model} rating thresholds)` : "Legend: standard percentile classes (VPD × SFDI method)";
-  return `<div class="cc-key"><div class="t">${esc(title)}</div><div class="bar">${CLASSES.map((c, i) => `<span style="background:${c.color}"><b>${esc(c.name)}</b>${txt[i]} percentile</span>`).join("")}</div>
+  const title = !f ? "Legend" : own ? `Legend: ${f.name} percentile ranges (from its ERC-${f.fuel_model} rating thresholds)` : `Legend: ${f.name} (standard percentile classes)`;
+  return `<div class="cc-key"><div class="t">${esc(title)}</div><div class="bar">${CLASSES.map((c, i) => `<span style="background:${c.color}"><b>${esc(c.name)}</b>${f ? txt[i] + " percentile" : ""}</span>`).join("")}</div>
     ${withOutline ? `<div class="cc-ol"><i></i>Outlined cell: the percentile band reached by the period selected under “Highlight percentile band”.</div>` : ""}</div>`;
 }
 function ccCardHtml(f, C, hl) {
@@ -2039,15 +2039,15 @@ function ccCardHtml(f, C, hl) {
       ${N ? `<dt>Seasonal normal</dt><dd>${esc(ccMD(D.today))} (${ccPeriod(C)}): ERC-${esc(f.fuel_model)} average <b>${ccNum(N.erc_avg, 1)}</b>, maximum <b>${ccNum(N.erc_max, 1)}</b> · BI-${esc(f.fuel_model)} average <b>${ccNum(N.bi_avg, 1)}</b>, maximum <b>${ccNum(N.bi_max, 1)}</b></dd>` : ""}
       <dt>Rating thresholds</dt><dd>${ccBreakpoints(f)}</dd>
       <dt>Percentile ranges</dt><dd>${fdraRanges(f) ? `<div class="cc-thr"><span class="nm">All</span>${CLASSES.map((c, i) => `<span class="c" style="background:${c.color}">${esc(c.name)} ${fdraRangeText(f)[i]}</span>`).join("")}</div><div>This FDRA's ERC-${esc(f.fuel_model)} thresholds expressed as percentiles of its own ${ccPeriod(C)} history. Used to color all columns except ERC and BI.</div>`
-        : `<div class="cc-thr"><span class="nm">All</span>${CLASSES.map(c => `<span class="c" style="background:${c.color}">${esc(c.name)} ${ccOrd(c.min)}–${ccOrd(c.max)}</span>`).join("")}</div><div>Standard percentile classes used by the VPD × SFDI method.</div>`}</dd>
+        : `<div class="cc-thr"><span class="nm">All</span>${CLASSES.map(c => `<span class="c" style="background:${c.color}">${esc(c.name)} ${ccOrd(c.min)}–${ccOrd(c.max)}</span>`).join("")}</div><div>No FDRA-specific rating thresholds; standard percentile classes are used.</div>`}</dd>
       <dt>Calculated rating</dt><dd><div class="cc-thr">${[["past7", "Past 7 days"], ["today", "Today"], ["next7", "Next 7 days"]].map(([k, lab]) => { const c = ccRating(f, k);
-          return `<span class="nm2">${lab}</span><span class="c" style="background:${c ? c.color : "var(--surface)"}">${c ? esc(c.name) : "–"}</span>`; }).join("")}</div><div>Calculated from FEMS data with the ${esc(ccMethodName(f))}. This is not the Official Rating set by FDRA leaders.</div></dd></dl>
+          return `<span class="nm2">${lab}</span><span class="c" style="background:${c ? c.color : "var(--surface)"}">${c ? esc(c.name) : "–"}</span>`; }).join("")}</div><div>Calculated from FEMS data${f.planner ? ` with the ${esc(ccMethodName(f))}` : ""}. This is not the Official Rating set by FDRA leaders.</div></dd></dl>
     ${ccTableHtml(f, C, hl)}
     ${ccKeyHtml(true, f)}
     <div class="cc-notes"><div class="t">Notes</div><ul>
       <li>Each row shows the value reached on that percentage of days in ${ccPeriod(C)}; for example, the 90th row is exceeded on only 10% of days.</li>
       <li>For fuel moisture, relative humidity and GSI, lower values indicate higher fire danger. These columns are ordered by fire danger, so the 90th row shows the value that only 10% of days were at or below.</li>
-      <li>${pm ? `ERC and BI are colored by this FDRA's ERC-${esc(f.fuel_model)} and BI-${esc(f.fuel_model)} rating thresholds${pm.window > 1 ? ` (the official rating uses the ${pm.window}-day average, so single-day colors are for reference)` : ""}. All other columns are colored by this FDRA's percentile ranges shown in the legend, which come from its ERC-${esc(f.fuel_model)} thresholds.` : "This FDRA is rated by the VPD × SFDI method; all columns are colored by the standard percentile classes shown in the legend."}</li>
+      <li>${pm ? `ERC and BI are colored by this FDRA's ERC-${esc(f.fuel_model)} and BI-${esc(f.fuel_model)} rating thresholds${pm.window > 1 ? ` (the rating uses the ${pm.window}-day average, so single-day colors are for reference)` : ""}. All other columns are colored by this FDRA's percentile ranges shown in the legend, which come from its ERC-${esc(f.fuel_model)} thresholds.` : "This FDRA has no FDRA-specific rating thresholds; all columns are colored by the standard percentile classes shown in the legend."}</li>
       <li>Derived indices: VPD is calculated from maximum temperature and minimum relative humidity; SFDI = ERC × BI; HDWI = VPD (hPa) × maximum wind speed (m/s).</li></ul></div>
     ${wxMissing ? `<div class="cc-pending">Weather percentiles will be added after the historical weather data is loaded.</div>` : ""}`;
 }
@@ -2101,7 +2101,7 @@ function ccCsv() {
   const head = cols.map(c => c.label + (CC_UNITS[c.k] ? ` (${CC_UNITS[c.k]})` : ""));
   const L = [[`${zoneLabel(f.zone)} ${f.name} FDRA Climate Card`], ["Reporting stations", ccStations(f)], ["Fuel model", f.fuel_model],
     ["Data source", "Fire Environment Mapping System (FEMS)"], ["Historical period", ccPeriod(C)], ["Data current as of", ccProcessed()],
-    ["Rating method", ccMethodName(f)],
+    ["Rating method", f.planner ? ccMethodName(f) : "Standard percentile classes (no FDRA-specific rating thresholds)"],
     ...(f.planner ? [[`ERC-${f.fuel_model} thresholds`, ...CLASSES.map((c, i) => `${c.name} ${i === 0 ? "<= " + f.planner.erc[0] : i < f.planner.erc.length ? "> " + f.planner.erc[i - 1] + " - " + f.planner.erc[i] : "> " + f.planner.erc[f.planner.erc.length - 1]}`)],
       ...(f.planner.bi ? [[`BI-${f.fuel_model} thresholds`, ...CLASSES.map((c, i) => `${c.name} ${i === 0 ? "<= " + f.planner.bi[0] : i < f.planner.bi.length ? "> " + f.planner.bi[i - 1] + " - " + f.planner.bi[i] : "> " + f.planner.bi[f.planner.bi.length - 1]}`)]] : [])] : []),
     ["Percentile ranges (all other columns)", ...CLASSES.map((c, i) => `${c.name} ${fdraRangeText(f)[i]}`)],
@@ -2245,21 +2245,26 @@ function hpRankTable(list, day) {
     `</tbody></table></div>`;
 }
 function hpKeyHtml() {
-  const f = pctOv.fdra && FDRA[pctOv.fdra];
+  const f = pctOv.fdra && FDRA[pctOv.fdra], k = pctOv.view === "rank" ? null : pctCol().k;
+  if (f && f.planner && (k === "erc" || k === "bi") && f.planner[k]) {    // ERC / BI are colored by the thresholds themselves
+    const lim = f.planner[k], lab = `${k.toUpperCase()}-${f.fuel_model}`;
+    return `<div class="cc-key"><div class="t">${esc(`Legend: ${f.name} ${lab} rating thresholds`)}</div><div class="bar">${CLASSES.map((c, i) =>
+      `<span style="background:${c.color}"><b>${esc(c.name)}</b>${lab} ${i === 0 ? `≤ ${lim[0]}` : i < lim.length ? `> ${lim[i - 1]} – ${lim[i]}` : `> ${lim[lim.length - 1]}`}</span>`).join("")}</div></div>`;
+  }
   if (f) return ccKeyHtml(false, f);
-  return ccKeyHtml(false) + `<div class="cc-pending">Each FDRA is colored with its own setup. FDRAs with rating thresholds use their own percentile ranges, taken from their ERC thresholds (select one FDRA, or open its Climate Card, to see its ranges). FDRAs rated by VPD × SFDI use the standard percentile classes shown above.</div>`;
+  return ccKeyHtml(false) + `<div class="cc-pending">Each FDRA is colored with its own percentile ranges, taken from its rating thresholds. Select one FDRA in the FDRA filter, or open its Climate Card, to see its ranges.</div>`;
 }
 function pctNotes(col) {
   const per = ccPeriod(CLIMATE);
   if (pctOv.view === "rank") return `<div class="cc-notes"><div class="t">Notes</div><ul>
     <li>Each cell shows the FDRA value (average of its reporting stations) and, below it, its percentile rank in the ${per} record.</li>
     <li>Ranks are in fire danger order: for fuel moisture, relative humidity and GSI, a low value ranks high.</li>
-    <li>ERC and BI are colored by each FDRA's rating thresholds. All other columns are colored by each FDRA's own percentile ranges (from its ERC thresholds), or by the standard percentile classes for FDRAs rated by VPD × SFDI.</li>
-    <li><b>Calculated Rating</b> is calculated from FEMS data with each FDRA's rating matrix (or VPD × SFDI). It is not the Official Rating set by FDRA leaders.</li></ul></div>`;
+    <li>ERC and BI are colored by each FDRA's rating thresholds. All other columns are colored by each FDRA's own percentile ranges, taken from its ERC thresholds.</li>
+    <li><b>Calculated Rating</b> is calculated from FEMS data with each FDRA's rating calculation, the same as the main outlook table. It is not the Official Rating set by FDRA leaders.</li></ul></div>`;
   return `<div class="cc-notes"><div class="t">Notes</div><ul>
     <li>Each column shows the value reached on that percentage of days in ${per}, from daily values averaged across each FDRA's reporting stations.</li>
     ${col.inv ? `<li>For ${esc(col.label)}, lower values indicate higher fire danger, so the columns are ordered by fire danger: the 90th column shows the value that only 10% of days were at or below.</li>` : ""}
-    ${col.k === "erc" || col.k === "bi" ? `<li>${esc(col.label)} is colored by each FDRA's rating thresholds; FDRAs rated by VPD × SFDI use the standard percentile classes.</li>` : `<li>Each FDRA's row is colored by its own percentile ranges (from its ERC thresholds); FDRAs rated by VPD × SFDI use the standard percentile classes.</li>`}</ul></div>`;
+    ${col.k === "erc" || col.k === "bi" ? `<li>${esc(col.label)} is colored by each FDRA's rating thresholds.</li>` : `<li>Each FDRA's row is colored by its own percentile ranges, taken from its ERC thresholds.</li>`}</ul></div>`;
 }
 function hpTitle() {
   return pctOv.view === "rank" ? `Current Percentile Rank · ${hpDayLabel()}` : `Historical Percentiles (${ccPeriod(CLIMATE)}) · ${pctColName(pctCol())}`;
