@@ -2013,9 +2013,25 @@ function popOut(params) {
   const w = window.open(u, "_blank");
   if (!w) toast("Your browser blocked the new tab. Allow pop-ups for this site and try again.");
 }
+/* Experience Builder blocks downloads and printing inside its frame. There the file or printout is
+   made in a new blank tab (address about:blank), so the hosting address is never shown. */
+function blankWin(title) {
+  const w = window.open("", "_blank");
+  if (!w) { toast("Your browser blocked the new tab. Allow pop-ups for this site and try again."); return null; }
+  w.document.open();
+  w.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(title)}</title></head><body style="font:14px 'Segoe UI',Arial,sans-serif;color:#1b1a17;padding:24px">Preparing ${esc(title)}…</body></html>`);
+  w.document.close();
+  return w;
+}
+function saveInWin(w, blob, name) {
+  const a = w.document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+  w.document.body.appendChild(a); a.click();
+  setTimeout(() => { try { w.close(); } catch (e) {} }, 1500);
+}
 function csvCell(v) { v = v == null ? "" : String(v); return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; }
 function downloadCsv(name, lines) {
   const blob = new Blob(["\ufeff" + lines.map(r => r.map(csvCell).join(",")).join("\r\n")], {type: "text/csv;charset=utf-8"});
+  if (FRAMED) { const w = blankWin(name); if (w) saveInWin(w, blob, name); return; }
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
   document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
 }
@@ -2041,9 +2057,22 @@ function printHtml(title, sub, html) {
   const pa = $("#printArea");
   const printed = new Date().toLocaleDateString("en-US", {month: "long", day: "numeric", year: "numeric"});
   // the page wrapper repeats the top spacing and the footer on every printed page
-  pa.innerHTML = `<table class="pg"><thead><tr><td></td></tr></thead>
+  const inner = `<table class="pg"><thead><tr><td></td></tr></thead>
     <tfoot><tr><td><div class="pgfoot"><span>Southwest Fire Danger · ${esc(EB_URL)}</span><span>Printed ${esc(printed)}</span></div></td></tr></tfoot>
     <tbody><tr><td><div class="p-title"><h3>${esc(title)}</h3><div>${sub}</div></div>${html}</td></tr></tbody></table>`;
+  if (FRAMED) {
+    const w = blankWin(title); if (!w) return;
+    const css = [...document.querySelectorAll("style")].map(x => x.textContent).join("\n");
+    w.document.open();
+    w.document.write(`<!doctype html><html lang="en" data-theme="light"><head><meta charset="utf-8"><title>${esc(title)}</title><style>${css}</style>
+      <style>html,body{background:#fff!important;margin:0}#printArea{display:block!important;color:#000;background:#fff;padding:12px}@media print{#printArea{padding:0}}</style></head>
+      <body class="print-cc"><div id="printArea">${inner}</div></body></html>`);
+    w.document.close();
+    w.addEventListener("afterprint", () => setTimeout(() => { try { w.close(); } catch (e) {} }, 200));
+    setTimeout(() => { try { w.focus(); w.print(); } catch (e) {} }, 400);
+    return;
+  }
+  pa.innerHTML = inner;
   document.body.classList.add("print-cc");
   const done = () => { document.body.classList.remove("print-cc"); pa.innerHTML = ""; window.removeEventListener("afterprint", done); };
   window.addEventListener("afterprint", done);
@@ -2056,16 +2085,24 @@ function ccPrint() {
 $("#ccClose").onclick = () => $("#climDlg").close();
 $("#climDlg").addEventListener("click", e => { if (e.target.id === "climDlg") $("#climDlg").close(); });
 document.querySelectorAll('input[name="ccHl"]').forEach(r => r.addEventListener("change", ccPaint));
-$("#ccCsv").onclick = () => CLIMATE && ccCur && (FRAMED ? popOut({cc: "csv", f: ccCur, hl: ccHl()}) : ccCsv());
-$("#ccPdf").onclick = () => CLIMATE && ccCur && (FRAMED ? popOut({cc: "pdf", f: ccCur, hl: ccHl()}) : ccPrint());
+$("#ccCsv").onclick = () => CLIMATE && ccCur && ccCsv();
+$("#ccPdf").onclick = () => CLIMATE && ccCur && ccPrint();
 function climatePanel(f) {
   const n = f.sig_raws.length;
   return `<section class="panel ccx"><div class="phead"><h2>Climate Card and Data Downloads</h2>
       <div class="pmeta">Historical percentiles (${ccPeriod(CLIMATE)}) with observed and forecast conditions for this FDRA, and the last 12 months of hourly station data.</div></div>
     <div class="cc-actions"><button class="btn primary" type="button" data-cc="${esc(f.key)}">Open Climate Card</button>
-      <a class="btn" href="data/hourly/${esc(f.slug)}.zip" download${FRAMED ? ' target="_blank" rel="noopener"' : ""}>${ICON_DL}Download hourly data (ZIP)</a>
+      <a class="btn" href="data/hourly/${esc(f.slug)}.zip" download data-hourly="${esc(f.slug)}">${ICON_DL}Download hourly data (ZIP)</a>
       <span class="note">Hourly weather and NFDRS observations (fuel model ${esc(f.fuel_model)}) for the last 12 months from ${n} reporting station${n === 1 ? "" : "s"}, as CSV files.</span></div></section>`;
 }
+document.addEventListener("click", e => {          // hourly ZIP inside Experience Builder: save it from a blank tab
+  const a = FRAMED && e.target.closest("a[data-hourly]"); if (!a) return;
+  e.preventDefault();
+  const name = a.dataset.hourly + "_hourly.zip", w = blankWin(name); if (!w) return;
+  fetch(a.href).then(r => { if (!r.ok) throw new Error(r.status); return r.blob(); })
+    .then(b => saveInWin(w, b, name))
+    .catch(() => { try { w.close(); } catch (x) {} toast("The hourly data could not be downloaded. Please try again later."); });
+});
 document.addEventListener("click", e => { const b = e.target.closest("[data-cc]"); if (b) { e.stopPropagation(); openClimateCard(b.dataset.cc); } });
 // ---- overview: historical percentiles for every FDRA ----
 async function renderPctOverview() {
@@ -2123,10 +2160,9 @@ function paintPctOverview() {
   $("#pctCol").onchange = e => { pctOv.col = e.target.value; paintPctOverview(); };
   $("#pctZone").onchange = e => { pctOv.zone = e.target.value; pctOv.fdra = ""; paintPctOverview(); };
   $("#pctFdra").onchange = e => { pctOv.fdra = e.target.value; paintPctOverview(); };
-  const ovParams = a => ({cc: a, col: pctOv.col, zone: pctOv.zone, fdra: pctOv.fdra});
-  $("#pctCsv").onclick = () => FRAMED ? popOut(ovParams("pctcsv")) : pctCsv(false);
-  $("#pctCsvAll").onclick = () => FRAMED ? popOut(ovParams("pctall")) : pctCsv(true);
-  $("#pctPdf").onclick = () => FRAMED ? popOut(ovParams("pctpdf")) : pctPrintHtml();
+  $("#pctCsv").onclick = () => pctCsv(false);
+  $("#pctCsvAll").onclick = () => pctCsv(true);
+  $("#pctPdf").onclick = () => pctPrintHtml();
 }
 function pctCsv(all) {
   const C = CLIMATE, list = pctOvList(), cols = all ? C.cols : [pctCol()], f = pctOv.fdra && FDRA[pctOv.fdra];
