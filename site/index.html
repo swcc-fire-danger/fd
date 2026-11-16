@@ -361,7 +361,11 @@ dialog#noteDlg{width:min(520px,calc(100vw - 24px));padding:0;overflow:hidden}
 .acc-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:12px}
 .acc-head h2{margin:0;font-size:22px}
 .acc-head p{margin:4px 0 0;font-size:13.5px;color:var(--ink-2)}
-.acc-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 14px;border-radius:8px;background:#fff4e5;color:#7a4300;border:1px solid #f3d19c;margin-bottom:12px;font-size:13.5px}
+.acc-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 14px;border-radius:8px;background:#fff4e5;color:#7a4300;border:1px solid #f3d19c;border-left:4px solid #d98a1c;margin-bottom:12px;font-size:13.5px}
+.acc-banner ul{margin:4px 0 0;padding-left:18px}
+.acc-banner li{margin:2px 0}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .acc-banner{background:#2e2414;color:#f3d6a8;border-color:#5c4520;border-left-color:#d98a1c}}
+:root[data-theme="dark"] .acc-banner{background:#2e2414;color:#f3d6a8;border-color:#5c4520;border-left-color:#d98a1c}
 .acc-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:12px}
 .acc-tabs button{font:inherit;font-size:14px;font-weight:600;background:none;border:0;border-bottom:2px solid transparent;padding:8px 12px;color:var(--ink-2);cursor:pointer}
 .acc-tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
@@ -2974,11 +2978,13 @@ function roleOk(j, user) {
 async function promoteRetry(id, user) {
   for (let i = 0; ; i++) {
     try { roleOk(await arc(`${REST}/community/groups/${id}/updateUsers`, {admins: user}, true), user); return; }
-    catch (e) { if (i >= 2) throw e; await new Promise(r => setTimeout(r, 2000)); }
+    catch (e) { if (i >= 2 || /privilege|permission/i.test(e.message)) throw e; await new Promise(r => setTimeout(r, 2000)); }   // a refusal is final; only "not seen yet" is retried
   }
 }
+let groupFails = new Map();   // username -> ArcGIS reason, from the last attempt
 async function applyTodo(todo) {
   let done = 0, failed = 0, why = "";
+  todo.forEach(t => groupFails.delete(t.u));
   for (const t of todo) {
     const id = GRP()[t.k], user = (ACCESS.get(t.u) || {}).user || t.u;
     try {
@@ -3010,7 +3016,7 @@ async function applyTodo(todo) {
         MEMBERS[t.k]?.delete(t.u);
       }
       done++;
-    } catch (e) { failed++; why = why || e.message; }
+    } catch (e) { failed++; why = why || e.message; groupFails.set(t.u, e.message); }
   }
   return {done, failed, why};
 }
@@ -3020,7 +3026,16 @@ function accPaintPending() {
   if (!(isRoot(ME()) || isAdminMgr(ME())) || !MEMBERS) { el.hidden = true; return; }
   const n = groupTodo().length;
   el.hidden = !n;
-  if (n) el.innerHTML = `<span><b>${n} group change${n === 1 ? "" : "s"} could not be made.</b>${lastGroupWhy ? ` ArcGIS said: ${esc(lastGroupWhy)}` : ""}</span><button class="btn primary" id="accApply" type="button">Try again</button>`;
+  if (n) {
+    const people = [...new Set(groupTodo().map(t => t.u))];
+    const line = u => {
+      const name = (ACCESS.get(u) || {}).name || u, why = groupFails.get(u) || "";
+      return /privileges to be a group admin/i.test(why)
+        ? `<li><b>${esc(name)}</b>: this person's ArcGIS account is not allowed to be a group manager. A NIFC ArcGIS administrator must change the account's role, or use <b>Edit current access</b> to make this person a Member.</li>`
+        : `<li><b>${esc(name)}</b>: group membership could not be updated${why ? ` (ArcGIS: ${esc(why)})` : ""}.</li>`;
+    };
+    el.innerHTML = `<div><b>Group membership needs attention</b><ul>${people.map(line).join("")}</ul></div><button class="btn" id="accApply" type="button">Try again</button>`;
+  }
 }
 async function openAccess() {
   if (!canManageAnyone()) return;
