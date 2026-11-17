@@ -993,8 +993,13 @@ footer.site-foot{margin-top:40px;background:var(--hdr-bg);border-top:4px solid #
     <div class="cc-seg" role="radiogroup" aria-labelledby="ccHlLbl">
       <label><input type="radio" name="ccHl" value="" checked><span>None</span></label>
       <label><input type="radio" name="ccHl" value="today"><span>Today</span></label>
-      <label><input type="radio" name="ccHl" value="past7"><span>Past 7 days</span></label>
-      <label><input type="radio" name="ccHl" value="next7"><span>Next 7 days</span></label></div></div>
+      <label><input type="radio" name="ccHl" value="past"><span>Past</span></label>
+      <label><input type="radio" name="ccHl" value="next"><span>Next</span></label></div></div>
+    <div class="hp-f" id="ccDaysF"><span class="hp-l" id="ccDaysLbl">Average</span>
+    <div class="cc-seg" role="radiogroup" aria-labelledby="ccDaysLbl">
+      <label><input type="radio" name="ccDays" value="3"><span>3 days</span></label>
+      <label><input type="radio" name="ccDays" value="5"><span>5 days</span></label>
+      <label><input type="radio" name="ccDays" value="7" checked><span>7 days</span></label></div></div>
     <div class="btns"><button class="btn" type="button" id="ccCsv" title="Download this Climate Card as a spreadsheet (CSV)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M4 19h16"/></svg>Export to Excel (CSV)</button><button class="btn primary" type="button" id="ccPdf" title="Print this Climate Card or save it as a PDF"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2M7 14h10v7H7z"/></svg>Print / Save as PDF</button></div>
   </div>
 </dialog>
@@ -1984,9 +1989,9 @@ function ccClass(f, k, v, dangerPct) {
   return idxClassForPct(f, k, dangerPct);
 }
 /* the calculated rating from FEMS data (same calculation as the main outlook table) */
-function ccRating(f, which) {
-  const lab = {past7: "7-Day Observed", today: "Today", next7: "7-Day Forecast"}[which];
-  const row = (f.detail_report || f.report || []).find(r => r.label === lab);
+function ccRating(f, which) {   // which: "today", "past3/5/7" or "next3/5/7"
+  const n = +(which.match(/\d+/) || [7])[0], lab = which === "today" ? "Today" : `${n}-Day ${which.startsWith("past") ? "Observed" : "Forecast"}`;
+  const row = rowsOf(f, n).find(r => r.label === lab);
   return row ? fdOf(row.values).cls : null;
 }
 const ccMethodName = f => f.planner ? (f.planner.grid ? `ERC-${f.fuel_model} × BI-${f.fuel_model} rating matrix` : `ERC-${f.fuel_model} rating thresholds`) + avgTag(f.planner) : "the standard calculation";
@@ -2011,8 +2016,8 @@ const ccRange = r => r ? `${ccMD(r[0])} – ${ccMD(r[1])}, ${r[1].slice(0, 4)}` 
 const ccRowName = lab => lab === "Min" ? "Minimum" : lab === "Max" ? "Maximum" : lab;
 const ccOrd = r => r + (r % 100 >= 11 && r % 100 <= 13 ? "th" : r % 10 === 1 ? "st" : r % 10 === 2 ? "nd" : r % 10 === 3 ? "rd" : "th");
 function ccRecentRows(C) {
-  const D = C.dates || {};
-  return [["past7", "Past 7-day average", ccRange(D.past7)], ["today", "Today", ccFull(D.today)], ["next7", "Next 7-day average (forecast)", ccRange(D.next7)]];
+  const D = C.dates || {}, n = ccN();
+  return [["past" + n, `Past ${n}-day average`, ccRange(D["past" + n])], ["today", "Today", ccFull(D.today)], ["next" + n, `Next ${n}-day average (forecast)`, ccRange(D["next" + n])]];
 }
 const ICON_DL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M4 19h16"/></svg>`, ICON_PR = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2M7 14h10v7H7z"/></svg>`;
 function ccTableHtml(f, C, hl) {
@@ -2075,7 +2080,7 @@ function ccCardHtml(f, C, hl) {
       ${N ? `<dt>Seasonal normal</dt><dd>${esc(ccMD(D.today))} (${ccPeriod(C)}): ERC-${esc(f.fuel_model)} average <b>${ccNum(N.erc_avg, 1)}</b>, maximum <b>${ccNum(N.erc_max, 1)}</b> · BI-${esc(f.fuel_model)} average <b>${ccNum(N.bi_avg, 1)}</b>, maximum <b>${ccNum(N.bi_max, 1)}</b></dd>` : ""}
       <dt>Rating thresholds</dt><dd>${ccBreakpoints(f)}</dd>
       <dt>Other indices</dt><dd><div class="cc-thr"><span class="nm">Percentile</span>${CLASSES.map((c, i) => `<span class="c" style="background:${c.color}">${esc(c.name)} ${otherRangeText(f)[i]}</span>`).join("")}</div><div>${esc(otherNote(f))}</div></dd>
-      <dt>Calculated rating</dt><dd><div class="cc-thr">${[["past7", "Past 7 days"], ["today", "Today"], ["next7", "Next 7 days"]].map(([k, lab]) => { const c = ccRating(f, k);
+      <dt>Calculated rating</dt><dd><div class="cc-thr">${[["past" + ccN(), `Past ${ccN()} days`], ["today", "Today"], ["next" + ccN(), `Next ${ccN()} days`]].map(([k, lab]) => { const c = ccRating(f, k);
           return `<span class="nm2">${lab}</span><span class="c" style="background:${c ? c.color : "var(--surface)"}">${c ? esc(c.name) : "–"}</span>`; }).join("")}</div><div>Calculated from FEMS data${f.planner ? ` with the ${esc(ccMethodName(f))}` : ""}. This is not the Official Rating set by FDRA leaders.</div></dd></dl>
     ${ccTableHtml(f, C, hl)}
     ${ccKeyHtml(true, f)}
@@ -2094,12 +2099,16 @@ async function openClimateCard(key) {
   $("#ccSub").innerHTML = `Reporting stations: ${esc(ccStations(f))} · Fuel model ${esc(f.fuel_model)}`;
   $("#ccBody").innerHTML = `<div class="muted">Loading…</div>`;
   document.querySelector('input[name="ccHl"][value=""]').checked = true;
+  document.querySelector('input[name="ccDays"][value="7"]').checked = true;
   if (!$("#climDlg").open) { $("#climDlg").showModal(); document.documentElement.classList.add("modal-open"); }
   try { await loadClimate(); } catch (e) { $("#ccBody").innerHTML = `<div class="nodata">The climate card could not be loaded (${esc(e.message)}).</div>`; return; }
   ccPaint();
 }
-function ccHl() { return document.querySelector('input[name="ccHl"]:checked')?.value || ""; }
-function ccPaint() { if (ccCur && CLIMATE) $("#ccBody").innerHTML = ccCardHtml(FDRA[ccCur], CLIMATE, ccHl()); }
+// 3 / 5 / 7-day averages; 3 and 5 need the newer climate data (otherwise the choice is hidden and 7 is used)
+const ccHas35 = () => !!(CLIMATE && CLIMATE.dates && CLIMATE.dates.past3);
+function ccN() { return ccHas35() ? +(document.querySelector('input[name="ccDays"]:checked')?.value || 7) : 7; }
+function ccHl() { const v = document.querySelector('input[name="ccHl"]:checked')?.value || ""; return v === "past" || v === "next" ? v + ccN() : v; }
+function ccPaint() { $("#ccDaysF").hidden = !ccHas35(); if (ccCur && CLIMATE) $("#ccBody").innerHTML = ccCardHtml(FDRA[ccCur], CLIMATE, ccHl()); }
 /* In Experience Builder the page runs in a sandboxed frame that blocks downloads and printing.
    There the buttons open this page in a new tab, which does the download or print. */
 const FRAMED = (() => { try { return window.self !== window.top; } catch (e) { return true; } })();
@@ -2140,7 +2149,7 @@ function ccCsv() {
     ...(f.planner ? [[`ERC-${f.fuel_model} thresholds`, ...CLASSES.map((c, i) => `${c.name} ${i === 0 ? "<= " + f.planner.erc[0] : i < f.planner.erc.length ? "> " + f.planner.erc[i - 1] + " - " + f.planner.erc[i] : "> " + f.planner.erc[f.planner.erc.length - 1]}`)],
       ...(f.planner.bi ? [[`BI-${f.fuel_model} thresholds`, ...CLASSES.map((c, i) => `${c.name} ${i === 0 ? "<= " + f.planner.bi[0] : i < f.planner.bi.length ? "> " + f.planner.bi[i - 1] + " - " + f.planner.bi[i] : "> " + f.planner.bi[f.planner.bi.length - 1]}`)]] : [])] : []),
     ["Other indices (percentile)", ...CLASSES.map((c, i) => `${c.name} ${otherRangeText(f)[i]}`)], ["", otherNote(f)],
-    ["Calculated rating (FEMS data, not the Official Rating)", ...[["past7", "Past 7 days"], ["today", "Today"], ["next7", "Next 7 days"]].map(([k, lab]) => `${lab}: ${ccRating(f, k)?.name || "-"}`)], [],
+    ["Calculated rating (FEMS data, not the Official Rating)", ...[["past" + ccN(), `Past ${ccN()} days`], ["today", "Today"], ["next" + ccN(), `Next ${ccN()} days`]].map(([k, lab]) => `${lab}: ${ccRating(f, k)?.name || "-"}`)], [],
     ["", ...cols.map(c => c.group)], ["Percentile", ...head]];
   C.rows.forEach((lab, i) => L.push([ccRowName(lab), ...cols.map(c => F.table[c.k] ? F.table[c.k][i] : "")]));
   L.push([], ["Observed and forecast conditions", ...head]);
@@ -2185,7 +2194,7 @@ function ccPrint() {
 $("#ccClose").onclick = () => $("#climDlg").close();
 $("#climDlg").addEventListener("close", () => document.documentElement.classList.remove("modal-open"));
 $("#climDlg").addEventListener("click", e => { if (e.target.id === "climDlg") $("#climDlg").close(); });
-document.querySelectorAll('input[name="ccHl"]').forEach(r => r.addEventListener("change", ccPaint));
+document.querySelectorAll('input[name="ccHl"], input[name="ccDays"]').forEach(r => r.addEventListener("change", ccPaint));
 $("#ccCsv").onclick = () => CLIMATE && ccCur && ccCsv();
 $("#ccPdf").onclick = () => CLIMATE && ccCur && ccPrint();
 function climatePanel(f) {
@@ -3691,7 +3700,10 @@ async function runLinkAction() {
     if (a === "csv" || a === "pdf") {
       const k = q.get("f"); if (!FDRA[k]) return;
       await openClimateCard(k);
-      const r = document.querySelector(`input[name="ccHl"][value="${CSS.escape(q.get("hl") || "")}"]`); if (r) { r.checked = true; ccPaint(); }
+      const hv = q.get("hl") || "", hm = hv.match(/^(past|next)(\d)$/);
+      const r = document.querySelector(`input[name="ccHl"][value="${CSS.escape(hm ? hm[1] : hv)}"]`); if (r) r.checked = true;
+      const dr = hm && document.querySelector(`input[name="ccDays"][value="${hm[2]}"]`); if (dr) dr.checked = true;
+      ccPaint();
       if (!CLIMATE) return;
       if (a === "csv") { ccCsv(); toast("Climate Card CSV downloaded."); closeHelperTab(); } else { closeAfterPrint(); setTimeout(ccPrint, 300); }
     }
