@@ -1646,10 +1646,10 @@ function reportTable(f) {
     const i = cols.findIndex(c => c.key === "bi") + 1;
     cols = [...cols.slice(0, i), ...PLANNER_COLS, ...cols.slice(i)].map(c => c.key === "erc" || c.key === "bi" ? {...c, label: c.label + "-" + fm} : c);
   }
-  const rows = f.zoneAvg ? f.report : rowsOf(f), NEW = !!(P || f.zoneAvg || f.detail_report);
+  const rows = f.zoneAvg ? f.report : rowsOf(f, avgN("table")), NEW = !!(P || f.zoneAvg || f.detail_report);
   const fuels = cols.filter(c => c.group === "Fuels"), wx = cols.filter(c => c.group === "Weather");
   const idx = META.fire_danger_index.toUpperCase();
-  let h = `${avgSwitch()}<div class="tbl-scroll"><table class="rep"><thead>
+  let h = `${avgSwitch("table")}<div class="tbl-scroll"><table class="rep"><thead>
     <tr class="grp"><th class="period" rowspan="2" style="background:var(--surface-2)"></th><th rowspan="2"></th>
       <th class="gsep" colspan="${fuels.length}">Fuels</th><th class="gsep" colspan="${wx.length}">Weather</th>
       <th class="gsep" rowspan="2" title="${P ? "Fire Danger Rating Matrix (" + P.label + ")" : META.fire_danger_method === "matrix" ? "Fire Danger Rating Matrix (VPD class × SFDI class)" : "Calculated from the " + idx + " percentile"}">Fire Danger<br><span style="font-weight:500;font-size:11.5px">(${esc(P ? P.label : f.zoneAvg ? "Zone average" : fdMethodLabel())})</span>${avgTag(P)}</th></tr>
@@ -1797,20 +1797,23 @@ function avgClass(idx) {
   const xs = idx.filter(i => i != null && i >= 0);
   return xs.length ? Math.floor(xs.reduce((a, b) => a + b + 1, 0) / xs.length + 0.5) - 1 : null;
 }
-// multi-day average shown in the last two rows (3, 5 or 7 days); 7 is in every report, 3 and 5 come from avg_rows
-let AVG_N = 7;
-try { AVG_N = [3, 5, 7].includes(+localStorage.getItem("fdo_avg")) ? +localStorage.getItem("fdo_avg") : 7; } catch (e) {}
-function rowsOf(f) {   // 7-row table (same rows as the FDRA and zone pages)
-  const R = f.detail_report || f.report, alt = AVG_N !== 7 && f.avg_rows && f.avg_rows[AVG_N];
+// multi-day average shown in the last two rows (3, 5 or 7 days). 7 is in every report; 3 and 5 come from avg_rows.
+// Each place has its own choice, kept only in this browser tab and only for the FDRA or zone it was made on:
+// the FDRA/zone page table, and the FDRA pop-up. The Southwest overview always shows 7 days.
+const AVG = {table: {key: "", n: 7}, pop: {key: "", n: 7}};
+const avgKey = w => w === "pop" ? "f:" + (state.fdra || "") : (state.zone || "") + "/" + (state.fdra || "");
+const avgN = w => AVG[w].key === avgKey(w) ? AVG[w].n : 7;
+function rowsOf(f, n = 7) {   // 7-row table (same rows as the FDRA and zone pages)
+  const R = f.detail_report || f.report, alt = n !== 7 && f.avg_rows && f.avg_rows[n];
   return alt ? R.map(r => r.label === "7-Day Observed" ? alt[0] : r.label === "7-Day Forecast" ? alt[1] : r) : R;
 }
-const avgSwitch = () => !META.fdras.some(f => f.avg_rows) ? "" : `<div class="avg-sw"><span>Multi-day average</span><div class="seg" role="group" aria-label="Multi-day average">${[3, 5, 7].map(n =>
-  `<button type="button" data-avgn="${n}" aria-pressed="${AVG_N === n}">${n}-day</button>`).join("")}</div></div>`;
+const avgSwitch = w => !META.fdras.some(f => f.avg_rows) ? "" : `<div class="avg-sw"><span>Multi-day average</span><div class="seg" role="group" aria-label="Multi-day average">${[3, 5, 7].map(n =>
+  `<button type="button" data-avgn="${n}" data-avgfor="${w}" aria-pressed="${avgN(w) === n}">${n}-day</button>`).join("")}</div></div>`;
 /* Zone numbers = average of its FDRAs (each FDRA's percentile is against its own history) */
-function zoneReport(z) {
+function zoneReport(z, n = 7) {
   const list = BY_ZONE[z].filter(f => !f.noData);
-  return {zoneAvg: true, n: list.length, report: rowsOf(list[0]).map((r0, i) => {
-    const vals = list.map(f => rowsOf(f)[i]?.values).filter(Boolean);
+  return {zoneAvg: true, n: list.length, report: rowsOf(list[0], n).map((r0, i) => {
+    const vals = list.map(f => rowsOf(f, n)[i]?.values).filter(Boolean);
     const out = {};
     if (vals.length) {
       const keys = new Set(vals.flatMap(v => Object.keys(v)));
@@ -1877,7 +1880,7 @@ function stateBlocks() {
     if (!zones.length) return "";
     const fdras = zones.flatMap(z => BY_ZONE[z]), w = worstOf(fdras);
     return `<section class="state-block"><header class="state-head">
-        <div><h3>${esc(state)}</h3><span>${zones.length} zone${zones.length === 1 ? "" : "s"} · ${fdras.length} FDRAs · ${esc(zones.join(" · "))}</span></div>
+        <div><h3>${esc(state)}</h3><span>${zones.length} Zone${zones.length === 1 ? "" : "s"} (${esc(zones.map(zoneLabel).join(", "))}) – ${fdras.length} FDRA${fdras.length === 1 ? "" : "s"}</span></div>
         <div class="state-badge"><small>Highest FDRA</small><span class="badge" style="background:${w ? w.color : "var(--surface-2)"}">${w ? esc(w.name) : "No data"}</span></div>
       </header>${outlookTable(fdras, {groupByZone: true, zones, footnote: false, detail: true})}</section>`;
   }).join("");
@@ -1899,7 +1902,7 @@ function renderView() {
   }
   if (!state.fdra) {               // zone view
     const z = state.zone, withData = BY_ZONE[z].filter(f => !f.noData), without = BY_ZONE[z].length - withData.length;
-    const zr = withData.length ? zoneReport(z) : null;
+    const zr = withData.length ? zoneReport(z, avgN("table")) : null;
     const ids = [...new Set(BY_ZONE[z].flatMap(f => f.sig_raws))];
     const today = zr?.report.find(r => r.label === "Today")?.values;
     const c = fdOf(today).cls;
@@ -2614,12 +2617,12 @@ function fdraSummary(f) {
       <span class="pb-t"><i style="width:${p == null ? 0 : Math.max(2, p)}%;background:${c ? c.color : "transparent"}"></i></span>
       <span class="pb-p">${p == null ? "—" : p + "%"}</span></div>`;
   }).join("");
-  const outlook = rowsOf(f).map(r => { const d = fdOf(r.values), p = (r.values || {}).erc_pct;
+  const outlook = rowsOf(f, avgN("pop")).map(r => { const d = fdOf(r.values), p = (r.values || {}).erc_pct;
     return `<div class="ol"><span class="ol-l">${esc(r.label)}</span><span class="badge sm" style="background:${d.cls ? d.cls.color : "var(--surface-2)"}">${d.cls ? esc(d.cls.name) : "—"}</span><span class="ol-p">${esc(label("erc"))} ${p == null ? "—" : p + "%"}</span></div>`; }).join("");
   const hist = `<div id="histCmp" class="muted" style="font-size:12.5px">Loading…</div>`;
   return `<h4>FDRA Percentiles · ${esc(mdy(panelDay === "obs" ? META.latest_obs_date : META.today))}</h4><div class="pbars">${bars}</div>
     <div class="footnote">Percentiles against this FDRA's ${esc(yearsOf(f))} record.${W ? ` ${esc(label("erc"))}${P.bi ? " and " + esc(label("bi")) : ""} are ${W}-day averages, ranked against ${W}-day averages.` : ""}${P ? ` ${esc(label("erc"))}${P.bi ? " and " + esc(label("bi")) : ""} colors follow this FDRA's adopted thresholds.` : ""} 100HR, 1000HR and GSI percentiles indicate dryness.</div>
-    <h4 class="ol-h">Outlook${avgSwitch()}</h4><div class="olrow">${outlook}</div>
+    <h4 class="ol-h">Outlook${avgSwitch("pop")}</h4><div class="olrow">${outlook}</div>
     <h4>Compared with History</h4>${hist}`;
 }
 async function fillHistory(f) {
@@ -2825,10 +2828,9 @@ document.addEventListener("click", e => {
   const rb = e.target.closest("[data-range]");
   if (rb) { chartRange = rb.dataset.range; document.querySelectorAll("[data-range]").forEach(b => b.setAttribute("aria-pressed", b === rb)); const f = FDRA[state.fdra]; if (f && CHART_CACHE[f.slug]) drawCharts(f, CHART_CACHE[f.slug]); return; }
   const ab = e.target.closest("[data-avgn]");
-  if (ab) { AVG_N = +ab.dataset.avgn; try { localStorage.setItem("fdo_avg", AVG_N); } catch (er) {}
-    const y = window.scrollY, dr = $("#drawer"), dy = dr.scrollTop, open = dr.classList.contains("show");
-    renderView(); window.scrollTo(0, y);
-    if (open) { openPanelForState(); dr.scrollTop = dy; }
+  if (ab) { const w = ab.dataset.avgfor; AVG[w] = {key: avgKey(w), n: +ab.dataset.avgn};
+    if (w === "pop") { const dr = $("#drawer"), dy = dr.scrollTop; openPanelForState(); dr.scrollTop = dy; }   // only the pop-up changes
+    else { const y = window.scrollY; renderView(); window.scrollTo(0, y); }                                      // only the page table changes
     return; }
   const nb = e.target.closest("[data-note]");
   if (nb) { e.stopPropagation(); return openNote(nb.dataset.note); }
