@@ -2402,8 +2402,8 @@ const selectOverview = () => go(null, null);
 const selectZone = z => go(z, null);
 const selectFdra = (key, o) => FDRA[key] && go(FDRA[key].zone, key, o);
 
-/* Station markers: ERC-Y percentile of the latest observed day; shape = FDRA station (circle) or other (diamond);
-   trend over the most recent 3 days inside the marker */
+/* Station markers: ERC-Y percentile of TODAY (forecast); shape = FDRA station (circle) or other (diamond);
+   trend over the most recent 3 observed days inside the marker */
 const ST_CLASSES = [
   {name: "< 60", min: 0, color: "#3fa535"},
   {name: "60 – 79.99", min: 60, color: "#bfe05a"},
@@ -2449,11 +2449,11 @@ function renderLegend() {
       <div class="lg-sec"><h5>FDRA Fire Danger</h5><div class="sub">Today · official rating when set, otherwise calculated</div>
         ${ramp(CLASSES.map(c => c.color))}
         <div class="lbls">${CLASSES.map(c => `<span>${esc(c.name)}</span>`).join("")}</div></div>
-      <div class="lg-sec"><h5>Station ERC-Y Percentile</h5><div class="sub">Latest observed day vs. each station's 2005–2024 record</div>
+      <div class="lg-sec"><h5>Station ERC-Y Percentile</h5><div class="sub">Today (forecast) vs. each station's 2005–2024 record</div>
         ${ramp(ST_CLASSES.map(c => c.color))}
         <div class="ticks">${ticks.map((t, i) => `<span style="left:${i * 20}%">${t}</span>`).join("")}</div>
-        <div class="row" style="margin-top:4px"><span class="it">${ic("circle", null, null)}No history</span></div></div>
-      <div class="lg-sec"><h5>Station Markers</h5><div class="sub">Arrow shows the ERC-Y change over the last 3 days</div>
+        <div class="row" style="margin-top:4px"><span class="it">${ic("circle", null, null)}No data</span></div></div>
+      <div class="lg-sec"><h5>Station Markers</h5><div class="sub">Arrow shows the ERC-Y change over the last 3 observed days</div>
         <div class="row"><span class="it">${ic("circle", NEUTRAL, null)}FDRA station</span><span class="it">${ic("diamond", NEUTRAL, null)}Other station</span></div>
         <div class="row"><span class="it">${ic("circle", NEUTRAL, "up")}Increase</span><span class="it">${ic("circle", NEUTRAL, "down")}Decrease</span><span class="it">${ic("circle", NEUTRAL, "flat")}No change</span></div></div>
       <div class="lg-sec"><h5>Boundaries</h5>
@@ -3540,7 +3540,7 @@ function startMap() {
           geometry: {type: "point", longitude: s.lon, latitude: s.lat},
           attributes: {id: s.id},
           symbol: {type: "picture-marker", url: stationIcon(s.fdras.length ? "circle" : "diamond", k, m.trend, ring),
-            width: sel || hov ? 26 : 22, height: sel || hov ? 26 : 22},
+            width: sel || hov ? 23 : 19, height: sel || hov ? 23 : 19},   // circles and diamonds: slightly smaller so the FDRAs show through
           popupTemplate: null
         });
       });
