@@ -1817,7 +1817,7 @@ const avgSwitch = w => !META.fdras.some(f => f.avg_rows) ? "" : `<div class="avg
 /* Zone numbers = average of its FDRAs (each FDRA's percentile is against its own history) */
 function zoneReport(z, n = 7) {
   const list = BY_ZONE[z].filter(f => !f.noData);
-  return {zoneAvg: true, n: list.length, report: rowsOf(list[0], n).map((r0, i) => {
+  return {zoneAvg: true, zone: z, n: list.length, report: rowsOf(list[0], n).map((r0, i) => {
     const vals = list.map(f => rowsOf(f, n)[i]?.values).filter(Boolean);
     const out = {};
     if (vals.length) {
