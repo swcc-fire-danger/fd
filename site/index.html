@@ -1028,9 +1028,9 @@ const DEC = {gsi: 2, precip: 2, sc: 1};
 // planner's numbers (expressed as percentiles of the FDRA's history); the other percentiles use the standard ranges.
 function pctClass(f, v, key) {
   if (f && f.planner && (key === "erc" || key === "bi") && f.planner[key]) return v[key + "_pcls"] != null ? CLASSES[v[key + "_pcls"]] : null;
-  return classForPct(v[key + "_pct"]);
+  return idxClassForPct(f, key, v[key + "_pct"]);
 }
-const avgTag = P => P && P.window > 1 ? `<br><small class="avgt">${P.window}-day avg</small>` : "";   // averaged methods (second header line)
+const avgTag = P => P && P.window > 1 ? ` (${P.window}-day average)` : "";   // averaged methods: "ERC-Y (7-day average)"
 const PLANNER_COLS = [{key: "ic", label: "IC", group: "Fuels", pct: true}, {key: "sc", label: "SC", group: "Fuels", pct: true}];
 const plannerRange = (lim, i) => { if (i < lim.length) return "≤ " + lim[i];
   const step = lim.some(x => x % 1) ? 0.1 : 1, t = lim[lim.length - 1] + step;   // 61.9 -> 62, 62 -> 63
@@ -1121,9 +1121,9 @@ async function loadData(pre) {
   const fullDate = iso => iso ? new Date(iso + "T12:00:00").toLocaleDateString("en-US", {weekday: "long", month: "long", day: "numeric", year: "numeric"}) : "";
   const issued = (() => { const d = new Date(String(META.forecast_pull_mst || "").replace(" ", "T"));
     return isNaN(d) ? esc(META.forecast_pull_mst || "") : d.toLocaleDateString("en-US", {weekday: "long", month: "long", day: "numeric", year: "numeric"}) + ", " + d.toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit"}); })();
-  $("#sourceLine").innerHTML = `Fuel and weather data is sourced from the <a href="https://fems.fs2c.usda.gov/ui" target="_blank" rel="noopener">Fire Environment Mapping System (FEMS)</a> application.
-    Percentile values are based on data from 2005 to 2024. Fire danger is based on breakpoints set locally by the US Forest Service.<br>
-    Observed through <strong>${esc(fullDate(META.latest_obs_date))}</strong>; forecast issued <strong>${issued} MST</strong>.`;
+  $("#sourceLine").innerHTML = `Fire danger and weather data is sourced from the <a href="https://fems.fs2c.usda.gov/ui" target="_blank" rel="noopener">Fire Environment Mapping System (FEMS)</a> application.
+    Percentile values are based on data from 2005 to 2024. Fire danger is based on breakpoints set locally by the US Forest Service and US Wildland Fire Service.<br>
+    Observed through <strong>${esc(fullDate(META.latest_obs_date))}</strong>; forecast last issued <strong>${issued} MST</strong>.`;
 }
 
 /* ---------------- new data: update the page in place (no reload, no jump back to the overview) ---------------- */
@@ -1666,7 +1666,7 @@ function reportTable(f) {
       <td class="kind">Value</td>
       ${fuels.map((c, i) => `<td class="${i === 0 ? "gsep" : ""}${v[c.key] == null ? " na" : ""}">${fmtNum(v[c.key], P && P.window > 1 && (c.key === "erc" || c.key === "bi") ? 1 : DEC[c.key] || 0)}</td>`).join("")}
       ${wx.map((c, i) => `<td rowspan="2" class="${i === 0 ? "gsep" : ""}${v[c.key] == null ? " na" : ""}">${fmtNum(v[c.key], DEC[c.key] || 0)}</td>`).join("")}
-      <td rowspan="2" class="fd gsep" style="background:${dcls ? dcls.color : "transparent"}" title="${fdv.method === "zone" ? `Average of ${f.n} FDRA ratings` : fdv.method === "planner" && !P ? "" : fdv.method === "planner" ? (v.erc_avg != null ? `${P.window}-day avg ERC-${fm} ${v.erc_avg}${P.bi ? ` · BI-${fm} ${v.bi_avg}` : ""} → ` : "") + `ERC class ${v.erc_cls + 1}${P.bi ? ` × BI class ${v.bi_cls + 1}` : ""}` : fdv.method === "matrix" ? "VPD × SFDI" : fdv.method ? fdv.method.toUpperCase() + " percentile (VPD or SFDI unavailable)" : ""}">${dcls ? esc(dcls.name) : "—"}${fdv.method === "planner" || fdv.method === "zone" ? "" : fdv.method && fdv.method !== "matrix" && META.fire_danger_method === "matrix" ? "<br><small style='font-weight:500'>(ERC)</small>" : ""}</td></tr>
+      <td rowspan="2" class="fd gsep" style="background:${dcls ? dcls.color : "transparent"}" title="${fdv.method === "zone" ? `Average of ${f.n} FDRA ratings` : fdv.method === "planner" && !P ? "" : fdv.method === "planner" ? (v.erc_avg != null ? `${P.window}-day average ERC-${fm} ${v.erc_avg}${P.bi ? ` · BI-${fm} ${v.bi_avg}` : ""} → ` : "") + `ERC class ${v.erc_cls + 1}${P.bi ? ` × BI class ${v.bi_cls + 1}` : ""}` : fdv.method === "matrix" ? "VPD × SFDI" : fdv.method ? fdv.method.toUpperCase() + " percentile (VPD or SFDI unavailable)" : ""}">${dcls ? esc(dcls.name) : "—"}${fdv.method === "planner" || fdv.method === "zone" ? "" : fdv.method && fdv.method !== "matrix" && META.fire_danger_method === "matrix" ? "<br><small style='font-weight:500'>(ERC)</small>" : ""}</td></tr>
       <tr><td class="kind">Percentile</td>
       ${fuels.map((c, i) => {
         if (!c.pct) return `<td class="${i === 0 ? "gsep" : ""} na">—</td>`;
@@ -1697,9 +1697,9 @@ function dailyTable(f) {
       <tr><th class="rl">BI-${esc(fm)}</th>${cells(obs, "bi")}${cells(fc, "bi")}</tr>
       ${f.planner ? "" : `<tr><th class="rl">SFDI</th>${cells(obs, "sfdi")}${cells(fc, "sfdi")}</tr>
       <tr><th class="rl">VPD</th>${cells(obs, "vpd")}${cells(fc, "vpd")}</tr>`}
-      ${P.window > 1 ? `<tr><th class="rl">ERC-${esc(fm)} <small class="avgt">${P.window}-day avg</small></th>${cells(obs, "erc_avg")}${cells(fc, "erc_avg")}</tr>
-      ${P.bi ? `<tr><th class="rl">BI-${esc(fm)} <small class="avgt">${P.window}-day avg</small></th>${cells(obs, "bi_avg")}${cells(fc, "bi_avg")}</tr>` : ""}` : ""}
-      <tr><th class="rl">Fire Danger${P.window > 1 ? ` <small class="avgt">${P.window}-day avg</small>` : ""}</th>${fdc(obs)}${fdc(fc)}</tr></tbody></table></div>
+      ${P.window > 1 ? `<tr><th class="rl">ERC-${esc(fm)} (${P.window}-day average)</th>${cells(obs, "erc_avg")}${cells(fc, "erc_avg")}</tr>
+      ${P.bi ? `<tr><th class="rl">BI-${esc(fm)} (${P.window}-day average)</th>${cells(obs, "bi_avg")}${cells(fc, "bi_avg")}</tr>` : ""}` : ""}
+      <tr><th class="rl">Fire Danger${P.window > 1 ? ` (${P.window}-day average)` : ""}</th>${fdc(obs)}${fdc(fc)}</tr></tbody></table></div>
     <div class="footnote">${(() => { if (!f.planner) return "Each day is rated from that day's FDRA-average VPD and SFDI percentiles in the rating matrix.";
       const ix = P.bi ? `ERC-${esc(fm)} and BI-${esc(fm)}` : `ERC-${esc(fm)}`;
       return P.window > 1 ? `Each day is rated from the ${P.window}-day average of ${ix} ending that day.` : `Each day is rated from that day's FDRA-average ${ix}.`; })()}</div>`;
@@ -1709,35 +1709,35 @@ function plannerBreakpoints(f) {
   const P = f.planner, fm = f.fuel_model || "Y", R = P.pct_ranges || {};
   const pr = (k, i) => R[k] && !R[k][i] ? "—" : R[k] ? (R[k][i][0] === R[k][i][1] ? R[k][i][0] : R[k][i][0] + "\u2009–\u2009" + R[k][i][1]) + "%" : "—";
   const B = !!P.bi, ix = B ? `ERC-${esc(fm)} and BI-${esc(fm)}` : `ERC-${esc(fm)}`;
-  return `<div class="bp"><h3>Fire Danger Breakpoints · ${ix}</h3><table class="bpt"><thead><tr><th>Fire Danger</th><th>ERC-${esc(fm)}${avgTag(P)}</th><th>ERC-${esc(fm)} percentile${avgTag(P)}</th>${B ? `<th>BI-${esc(fm)}${avgTag(P)}</th><th>BI-${esc(fm)} percentile${avgTag(P)}</th>` : ""}<th>Other percentiles</th></tr></thead><tbody>
-    ${CLASSES.map((c, i) => `<tr style="background:${c.color}"><td><b>${esc(c.name)}</b></td><td>${plannerRange(P.erc, i)}</td><td>${pr("erc", i)}</td>${B ? `<td>${plannerRange(P.bi, i)}</td><td>${pr("bi", i)}</td>` : ""}<td>${(c.min || 1) + (c.max === 100 ? "\u2009–\u2009100" : "\u2009–\u2009" + c.max)}%</td></tr>`).join("")}</tbody></table>
-    <div class="footnote">${ix} values are the adopted thresholds for this FDRA${B ? "" : "; the ERC-" + esc(fm) + " class is the fire danger rating"}${P.window > 1 ? `, applied to the ${P.window}-day average` : ""}. The percentile columns express the same thresholds as percentiles of the ${esc(yearsOf(f))} record${P.window > 1 ? ` of ${P.window}-day averages` : ""} and set the ${ix} colors in the Percentile row. All other percentiles use the standard ranges. 100HR, 1000HR and GSI percentiles indicate dryness.</div></div>`;
+  return `<div class="bp"><h3>Fire Danger Breakpoints · ${B ? `ERC-${esc(fm)}, BI-${esc(fm)}` : `ERC-${esc(fm)}`}${avgTag(P)}</h3><table class="bpt"><thead><tr><th>Fire Danger</th><th>ERC-${esc(fm)}</th><th>ERC-${esc(fm)} percentile</th>${B ? `<th>BI-${esc(fm)}</th><th>BI-${esc(fm)} percentile</th>` : ""}<th>Other index percentiles</th></tr></thead><tbody>
+    ${CLASSES.map((c, i) => `<tr style="background:${c.color}"><td><b>${esc(c.name)}</b></td><td>${plannerRange(P.erc, i)}</td><td>${pr("erc", i)}</td>${B ? `<td>${plannerRange(P.bi, i)}</td><td>${pr("bi", i)}</td>` : ""}<td>${otherRanges(f)[i][0] + "\u2009–\u2009" + otherRanges(f)[i][1]}%</td></tr>`).join("")}</tbody></table>
+    <div class="footnote">${ix} values are the adopted thresholds for this FDRA${B ? "" : "; the ERC-" + esc(fm) + " class is the fire danger rating"}${P.window > 1 ? `, applied to the ${P.window}-day average` : ""}. The percentile columns express the same thresholds as percentiles of the ${esc(yearsOf(f))} record${P.window > 1 ? ` of ${P.window}-day averages` : ""} and set the ${ix} colors in the Percentile row. All other indices use the general breakpoints in the last column. 100HR, 1000HR and GSI percentiles indicate dryness.</div></div>`;
 }
 function plannerMatrix(f) {
   const P = f.planner, fm = f.fuel_model || "Y";
   if (!P.grid) {   // ERC-only method: one row, the ERC class is the rating
     const tj = ((f.report.find(r => r.label === "Today") || {}).values || {}).erc_cls, ab = ["L", "M", "H", "VH", "E"];
-    return `<div class="bp"><h3>Fire Danger Matrix · ${esc(P.label)}</h3><table class="bpt mtx"><thead>
-      <tr><th>ERC-${esc(fm)} →${avgTag(P)}</th>${CLASSES.map((_, j) => `<th>${plannerRange(P.erc, j)}</th>`).join("")}</tr></thead><tbody>
+    return `<div class="bp"><h3>Fire Danger Matrix · ${esc(P.label)}${avgTag(P)}</h3><table class="bpt mtx"><thead>
+      <tr><th>ERC-${esc(fm)} →</th>${CLASSES.map((_, j) => `<th>${plannerRange(P.erc, j)}</th>`).join("")}</tr></thead><tbody>
       <tr><th>Fire Danger</th>${CLASSES.map((c, j) => `<td class="${j === tj ? "now" : ""}" style="background:${c.color}" title="${esc(c.name)}${j === tj ? " (today)" : ""}"><b>${ab[j]}</b></td>`).join("")}</tr>
     </tbody></table><div class="footnote">The fire danger rating is the ERC-${esc(fm)} class. ${P.window > 1 ? `Ratings use the ${P.window}-day average ending on each day.` : "7-day ratings use 7-day averages."}${tj != null ? ` <span class="nowkey"></span> Today` : ""}</div></div>`;
   }
   const tv = (f.report.find(r => r.label === "Today") || {}).values || {};
   const ti = tv.bi_cls, tj = tv.erc_cls, ab = ["L", "M", "H", "VH", "E"];
-  return `<div class="bp"><h3>Fire Danger Matrix · ${esc(P.label)}</h3><table class="bpt mtx"><thead>
-      <tr><th>BI-${esc(fm)} ↓ / ERC-${esc(fm)} →${avgTag(P)}</th>${P.grid[0].map((_, j) => `<th>${plannerRange(P.erc, j)}</th>`).join("")}</tr></thead><tbody>
+  return `<div class="bp"><h3>Fire Danger Matrix · ${esc(P.label)}${avgTag(P)}</h3><table class="bpt mtx"><thead>
+      <tr><th>BI-${esc(fm)} ↓ / ERC-${esc(fm)} →</th>${P.grid[0].map((_, j) => `<th>${plannerRange(P.erc, j)}</th>`).join("")}</tr></thead><tbody>
       ${P.grid.map((row, i) => `<tr><th>${plannerRange(P.bi, i)}</th>${row.map((c, j) => `<td class="${i === ti && j === tj ? "now" : ""}" style="background:${CLASSES[c].color}" title="${esc(CLASSES[c].name)}${i === ti && j === tj ? " (today)" : ""}"><b>${ab[c]}</b></td>`).join("")}</tr>`).join("")}
     </tbody></table><div class="footnote">The fire danger rating is where the ERC-${esc(fm)} column and the BI-${esc(fm)} row meet. ${P.window > 1 ? `Ratings use the ${P.window}-day average ending on each day.` : "7-day ratings use 7-day averages."}${ti != null && tj != null ? ` <span class="nowkey"></span> Today` : ""}</div></div>`;
 }
 function breakpointTable(f) {
   if (f.planner) return plannerBreakpoints(f);
-  const ix = META.breakpoint_indices;
-  return `<div class="bp"><h3>Fire Danger Breakpoints</h3><table class="bpt"><thead><tr><th>Percentile</th>${ix.map(k => `<th>${k.toUpperCase()}</th>`).join("")}<th>Fire Danger</th></tr></thead><tbody>
+  const ix = META.breakpoint_indices, oth = otherRanges(f);
+  return `<div class="bp"><h3>Fire Danger Breakpoints</h3><table class="bpt"><thead><tr><th>Fire Danger</th><th>Percentile</th>${ix.map(k => `<th>${k.toUpperCase()}</th>`).join("")}</tr></thead><tbody>
     ${f.breakpoints.map((b, i) => {
       const c = CLASSES[i];
-      return `<tr style="background:${c.color}"><td>${esc(b.range)}</td>${ix.map(k => {
+      return `<tr style="background:${c.color}"><td><b>${esc(c.name)}</b></td><td>${oth[i][0]}\u2009–\u2009${oth[i][1]}%</td>${ix.map(k => (() => {
         const [lo, hi] = b[k]; return `<td>${i === 0 ? "≤ " + fmtNum(hi) : i === f.breakpoints.length - 1 ? "≥ " + fmtNum(lo) : fmtNum(lo) + "\u2009–\u2009" + fmtNum(hi)}</td>`;
-      }).join("")}<td><b>${esc(c.name)}</b></td></tr>`;
+      })()).join("")}</tr>`;
     }).join("")}</tbody></table>
     <div class="footnote">Analysis period ${esc(f.analysis_period || "")} · Fuel model ${esc(f.fuel_model)}${(META.inverted_pct || []).length ? ` · ${META.inverted_pct.map(k => (META.report_cols.find(c => c.key === k) || {}).label || k).join(", ")} are shown as dryness percentiles (higher = drier)` : ""}</div></div>`;
 }
@@ -1748,7 +1748,7 @@ function matrixTable(f) {
   const rng = (k, i) => { const [lo, hi] = B[i][k]; return i === 0 ? "0 – " + fmtNum(hi) : i === last ? fmtNum(lo) + "+" : fmtNum(lo) + " – " + fmtNum(hi); };
   const ab = ["L", "M", "H", "VH", "E"];
   const tv = (f.report.find(r => r.label === "Today") || {}).values || {};
-  const ti = CLASSES.indexOf(classForPct(tv.vpd_pct)), tj = CLASSES.indexOf(classForPct(tv.sfdi_pct));
+  const ti = CLASSES.indexOf(otherClassForPct(f, tv.vpd_pct)), tj = CLASSES.indexOf(otherClassForPct(f, tv.sfdi_pct));
   return `<div class="bp"><h3>Fire Danger Matrix (VPD × SFDI)</h3><table class="bpt mtx"><thead>
       <tr><th>VPD ↓ / SFDI →</th>${B.map((_, j) => `<th>${rng("sfdi", j)}</th>`).join("")}</tr></thead><tbody>
       ${B.map((_, i) => `<tr><th>${rng("vpd", i)}</th>${M[i].map((c, j) => `<td class="${i === ti && j === tj ? "now" : ""}" style="background:${CLASSES[c].color}" title="${esc(CLASSES[c].name)}${i === ti && j === tj ? " (today)" : ""}"><b>${ab[c] || esc(CLASSES[c].name)}</b></td>`).join("")}</tr>`).join("")}
@@ -1758,7 +1758,7 @@ const SHOW_RATING_SUMMARY = false;   // set to true to show the Calculated Ratin
 function ratingSummary(f) {
   if (META.fire_danger_method !== "matrix") return "";
   const R = f.report;
-  const cell = (val, p) => { const c = classForPct(p); return `<td class="rs-c" style="background:${c ? c.color : "transparent"}"><span class="rs-n">${fmtNum(val)}</span>${c ? esc(c.name) : "—"}</td>`; };
+  const cell = (val, p) => { const c = otherClassForPct(f, p); return `<td class="rs-c" style="background:${c ? c.color : "transparent"}"><span class="rs-n">${fmtNum(val)}</span>${c ? esc(c.name) : "—"}</td>`; };
   return `<div class="bp rs"><h3>Rating Summary</h3><table class="bpt rst"><thead>
       <tr><th></th>${R.map(r => `<th>${esc(r.label)}<span>${esc(r.type === "F" ? "Forecast" : "Observed")}</span></th>`).join("")}</tr></thead><tbody>
       <tr><th>VPD</th>${R.map(r => cell((r.values || {}).vpd, (r.values || {}).vpd_pct)).join("")}</tr>
@@ -1938,29 +1938,34 @@ const ccNum = (v, dec) => v == null ? "–" : Number(v).toFixed(dec);
 const ccShort = iso => iso ? new Date(iso + "T12:00:00").toLocaleDateString("en-US", {month: "short", day: "numeric"}) : "";
 const ccDay = iso => iso ? new Date(iso + "T12:00:00").toLocaleDateString("en-US", {weekday: "short", month: "short", day: "numeric"}) : "";
 // class of a value: the FDRA's own planner numbers for ERC/BI when it has them, else the danger percentile of the row
-/* Each FDRA's own percentile ranges: its ERC rating thresholds expressed as percentiles of its own history.
-   FDRAs without thresholds use the standard percentile classes. */
-const fdraRanges = f => {
-  const r = f && f.planner && f.planner.pct_ranges && f.planner.pct_ranges.erc;
-  return r && r.length === CLASSES.length && r.every(Boolean) ? r : null;
-};
-function fdraClassForPct(f, p) {
+/* General percentile ranges: used for every index that is not part of the FDRA's rating calculation.
+   One set for all zones; a zone can keep its own set (meta.other_pct.zones). */
+const OTHER_PCT_DEFAULT = [[0, 34], [35, 64], [65, 84], [85, 95], [96, 100]];
+function otherRanges(f) {
+  const o = META.other_pct;
+  if (!o) return f && f.zone === "WDZ" ? CLASSES.map(c => [c.min, c.max]) : OTHER_PCT_DEFAULT;
+  return (f && o.zones && o.zones[f.zone]) || o.default || OTHER_PCT_DEFAULT;
+}
+function otherClassForPct(f, p) {
   if (p == null) return null;
-  const r = fdraRanges(f); if (!r) return classForPct(p);
-  const i = r.findIndex(([lo, hi]) => p <= hi);
+  const i = otherRanges(f).findIndex(([lo, hi]) => p <= hi);
   return CLASSES[i < 0 ? CLASSES.length - 1 : i];
 }
-function fdraRangeText(f) {   // e.g. ["0th–67th", "68th–87th", ...]
-  const r = fdraRanges(f);
-  return r ? r.map(([lo, hi], i) => `${ccOrd(i === 0 ? 0 : lo)}–${ccOrd(hi)}`) : CLASSES.map(c => `${ccOrd(c.min)}–${ccOrd(c.max)}`);
-}
+const otherRangeText = f => otherRanges(f).map(([lo, hi]) => `${ccOrd(lo)}–${ccOrd(hi)}`);
+// indices that make up the FDRA's calculated rating: local ERC/BI breakpoints, or the rating-matrix indices
+const ratingKeys = f => f && f.planner ? ["erc", ...(f.planner.bi ? ["bi"] : [])] : (META.rating_indices || (META.fire_danger_method === "matrix" ? ["vpd", "sfdi"] : [META.fire_danger_index]));
+// color for a percentile of index k: rating indices use the rating classes, all other indices the general ranges
+// ERC/BI of FDRAs with local breakpoints use those breakpoints; every other percentile uses the zone's general ranges
+const idxClassForPct = (f, k, p) => p == null ? null : f && f.planner && ratingKeys(f).includes(k) ? classForPct(p) : otherClassForPct(f, p);
+const ixName = (f, k) => k === "erc" || k === "bi" ? `${k.toUpperCase()}-${f.fuel_model || "Y"}` : ((META.report_cols.find(c => c.key === k) || {}).label || k.toUpperCase());
+const ixList = a => a.length < 2 ? a.join("") : a.slice(0, -1).join(", ") + " and " + a[a.length - 1];
 function ccClass(f, k, v, dangerPct) {
   const pm = f && f.planner;
   if (pm && (k === "erc" || k === "bi") && pm[k] && v != null) {
     let i = pm[k].findIndex(top => v <= top); if (i < 0) i = pm[k].length;
     return CLASSES[i];
   }
-  return fdraClassForPct(f, dangerPct);
+  return idxClassForPct(f, k, dangerPct);
 }
 /* the calculated rating from FEMS data (same calculation as the main outlook table) */
 function ccRating(f, which) {
@@ -1968,7 +1973,7 @@ function ccRating(f, which) {
   const row = (rowsOf(f) || []).find(r => r.label === lab);
   return row ? fdOf(row.values).cls : null;
 }
-const ccMethodName = f => f.planner ? (f.planner.grid ? `ERC-${f.fuel_model} × BI-${f.fuel_model} rating matrix` : `ERC-${f.fuel_model} rating thresholds`) : "the standard calculation";
+const ccMethodName = f => f.planner ? (f.planner.grid ? `ERC-${f.fuel_model} × BI-${f.fuel_model} rating matrix` : `ERC-${f.fuel_model} rating thresholds`) + avgTag(f.planner) : "the standard calculation";
 function ccProcessed() {
   const g = new Date(META.fems_pulled_utc || META.generated_utc);
   return g.toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit", timeZone: "America/Phoenix"}) + " MST " +
@@ -1979,9 +1984,9 @@ function ccBreakpoints(f) {
   const line = (lab, lim) => `<div class="cc-thr"><span class="nm">${esc(lab)}</span>` + CLASSES.map((c, i) => {
     const t = i === 0 ? `≤ ${lim[0]}` : i < lim.length ? `> ${lim[i - 1]} – ${lim[i]}` : `> ${lim[lim.length - 1]}`;
     return `<span class="c" style="background:${c.color}">${esc(c.name)} ${t}</span>`; }).join("") + `</div>`;
-  if (pm) return [line(`ERC-${f.fuel_model}`, pm.erc), pm.bi ? line(`BI-${f.fuel_model}`, pm.bi) : ""].join("")
+  if (pm) return [line(`ERC-${f.fuel_model}${avgTag(pm)}`, pm.erc), pm.bi ? line(`BI-${f.fuel_model}${avgTag(pm)}`, pm.bi) : ""].join("")
     + (pm.window > 1 ? `<div>Ratings are based on the ${pm.window}-day average of ${pm.bi ? "ERC and BI" : "ERC"}.</div>` : "");
-  return `<div>No FDRA-specific rating thresholds. Standard percentile classes are used.</div>`;
+  return `<div class="cc-thr"><span class="nm">${esc(ixList(ratingKeys(f).map(k => ixName(f, k))))}</span>${CLASSES.map((c, i) => `<span class="c" style="background:${c.color}">${esc(c.name)} ${otherRangeText(f)[i]}</span>`).join("")}</div><div>Percentile classes combined in the rating matrix.</div>`;
 }
 function ccStations(f) { return f.sig_raws.map(id => `${titleCase(STATIONS[id]?.name || id)} (${id})`).join(", "); }
 const ccFull = iso => iso ? new Date(iso + "T12:00:00").toLocaleDateString("en-US", {weekday: "long", month: "long", day: "numeric", year: "numeric"}) : "";
@@ -2032,10 +2037,15 @@ function ccTableHtml(f, C, hl) {
   }).join("") + "</tr>";
   return h + "</tbody></table></div>";
 }
+function otherNote(f) {
+  const rk = ixList(ratingKeys(f).map(k => ixName(f, k)));
+  return f.planner ? `${rk} breakpoints were calculated locally. All other indices use the general breakpoints identified for the fire danger rating bins.`
+    : "All indices use the general breakpoints identified for the fire danger rating bins.";
+}
 function ccKeyHtml(withOutline, f) {
-  const own = f && fdraRanges(f), txt = f ? fdraRangeText(f) : CLASSES.map(c => `${ccOrd(c.min)}–${ccOrd(c.max)}`);
-  const title = !f ? "Legend" : own ? `Legend: ${f.name} percentile ranges (from its ERC-${f.fuel_model} rating thresholds)` : `Legend: ${f.name} (standard percentile classes)`;
-  return `<div class="cc-key"><div class="t">${esc(title)}</div><div class="bar">${CLASSES.map((c, i) => `<span style="background:${c.color}"><b>${esc(c.name)}</b>${f ? txt[i] + " percentile" : ""}</span>`).join("")}</div>
+  const txt = otherRangeText(f);
+  const title = f ? `Legend: other indices · ${f.name}` : "Legend: other indices";
+  return `<div class="cc-key"><div class="t">${esc(title)}</div><div class="bar">${CLASSES.map((c, i) => `<span style="background:${c.color}"><b>${esc(c.name)}</b>${txt[i]} percentile</span>`).join("")}</div>
     ${withOutline ? `<div class="cc-ol"><i></i>Outlined cell: the percentile band reached by the period selected under “Highlight percentile band”.</div>` : ""}</div>`;
 }
 function ccCardHtml(f, C, hl) {
@@ -2048,8 +2058,7 @@ function ccCardHtml(f, C, hl) {
       <dt>Data current as of</dt><dd><b>${esc(ccProcessed())}</b></dd>
       ${N ? `<dt>Seasonal normal</dt><dd>${esc(ccMD(D.today))} (${ccPeriod(C)}): ERC-${esc(f.fuel_model)} average <b>${ccNum(N.erc_avg, 1)}</b>, maximum <b>${ccNum(N.erc_max, 1)}</b> · BI-${esc(f.fuel_model)} average <b>${ccNum(N.bi_avg, 1)}</b>, maximum <b>${ccNum(N.bi_max, 1)}</b></dd>` : ""}
       <dt>Rating thresholds</dt><dd>${ccBreakpoints(f)}</dd>
-      <dt>Percentile ranges</dt><dd>${fdraRanges(f) ? `<div class="cc-thr"><span class="nm">All</span>${CLASSES.map((c, i) => `<span class="c" style="background:${c.color}">${esc(c.name)} ${fdraRangeText(f)[i]}</span>`).join("")}</div><div>This FDRA's ERC-${esc(f.fuel_model)} thresholds expressed as percentiles of its own ${ccPeriod(C)} history. Used to color all columns except ERC and BI.</div>`
-        : `<div class="cc-thr"><span class="nm">All</span>${CLASSES.map(c => `<span class="c" style="background:${c.color}">${esc(c.name)} ${ccOrd(c.min)}–${ccOrd(c.max)}</span>`).join("")}</div><div>No FDRA-specific rating thresholds; standard percentile classes are used.</div>`}</dd>
+      <dt>Other indices</dt><dd><div class="cc-thr"><span class="nm">Percentile</span>${CLASSES.map((c, i) => `<span class="c" style="background:${c.color}">${esc(c.name)} ${otherRangeText(f)[i]}</span>`).join("")}</div><div>${esc(otherNote(f))}</div></dd>
       <dt>Calculated rating</dt><dd><div class="cc-thr">${[["past7", "Past 7 days"], ["today", "Today"], ["next7", "Next 7 days"]].map(([k, lab]) => { const c = ccRating(f, k);
           return `<span class="nm2">${lab}</span><span class="c" style="background:${c ? c.color : "var(--surface)"}">${c ? esc(c.name) : "–"}</span>`; }).join("")}</div><div>Calculated from FEMS data${f.planner ? ` with the ${esc(ccMethodName(f))}` : ""}. This is not the Official Rating set by FDRA leaders.</div></dd></dl>
     ${ccTableHtml(f, C, hl)}
@@ -2057,7 +2066,7 @@ function ccCardHtml(f, C, hl) {
     <div class="cc-notes"><div class="t">Notes</div><ul>
       <li>Each row shows the value reached on that percentage of days in ${ccPeriod(C)}; for example, the 90th row is exceeded on only 10% of days.</li>
       <li>For fuel moisture, relative humidity and GSI, lower values indicate higher fire danger. These columns are ordered by fire danger, so the 90th row shows the value that only 10% of days were at or below.</li>
-      <li>${pm ? `ERC and BI are colored by this FDRA's ERC-${esc(f.fuel_model)} and BI-${esc(f.fuel_model)} rating thresholds${pm.window > 1 ? ` (the rating uses the ${pm.window}-day average, so single-day colors are for reference)` : ""}. All other columns are colored by this FDRA's percentile ranges shown in the legend, which come from its ERC-${esc(f.fuel_model)} thresholds.` : "This FDRA has no FDRA-specific rating thresholds; all columns are colored by the standard percentile classes shown in the legend."}</li>
+      <li>${pm ? `${esc(ixList(ratingKeys(f).map(k => ixName(f, k))))} ${ratingKeys(f).length > 1 ? "are" : "is"} colored by this FDRA's local breakpoints${pm.window > 1 ? ` (the rating uses the ${pm.window}-day average, so single-day colors are for reference)` : ""}. All other indices are colored by the general breakpoints shown in the legend.` : "All indices are colored by the general breakpoints shown in the legend."}</li>
       <li>Derived indices: VPD is calculated from maximum temperature and minimum relative humidity; SFDI = ERC × BI; HDWI = VPD (hPa) × maximum wind speed (m/s).</li></ul></div>
     ${wxMissing ? `<div class="cc-pending">Weather percentiles will be added after the historical weather data is loaded.</div>` : ""}`;
 }
@@ -2111,10 +2120,10 @@ function ccCsv() {
   const head = cols.map(c => c.label + (CC_UNITS[c.k] ? ` (${CC_UNITS[c.k]})` : ""));
   const L = [[`${zoneLabel(f.zone)} ${f.name} FDRA Climate Card`], ["Reporting stations", ccStations(f)], ["Fuel model", f.fuel_model],
     ["Data source", "Fire Environment Mapping System (FEMS)"], ["Historical period", ccPeriod(C)], ["Data current as of", ccProcessed()],
-    ["Rating method", f.planner ? ccMethodName(f) : "Standard percentile classes (no FDRA-specific rating thresholds)"],
+    ["Rating method", f.planner ? ccMethodName(f) : `${ixList(ratingKeys(f).map(k => ixName(f, k)))} percentile rating matrix (${CLASSES.map((c, i) => `${c.name} ${otherRanges(f)[i][0]}-${otherRanges(f)[i][1]}`).join(", ")})`],
     ...(f.planner ? [[`ERC-${f.fuel_model} thresholds`, ...CLASSES.map((c, i) => `${c.name} ${i === 0 ? "<= " + f.planner.erc[0] : i < f.planner.erc.length ? "> " + f.planner.erc[i - 1] + " - " + f.planner.erc[i] : "> " + f.planner.erc[f.planner.erc.length - 1]}`)],
       ...(f.planner.bi ? [[`BI-${f.fuel_model} thresholds`, ...CLASSES.map((c, i) => `${c.name} ${i === 0 ? "<= " + f.planner.bi[0] : i < f.planner.bi.length ? "> " + f.planner.bi[i - 1] + " - " + f.planner.bi[i] : "> " + f.planner.bi[f.planner.bi.length - 1]}`)]] : [])] : []),
-    ["Percentile ranges (all other columns)", ...CLASSES.map((c, i) => `${c.name} ${fdraRangeText(f)[i]}`)],
+    ["Other indices (percentile)", ...CLASSES.map((c, i) => `${c.name} ${otherRangeText(f)[i]}`)], ["", otherNote(f)],
     ["Calculated rating (FEMS data, not the Official Rating)", ...[["past7", "Past 7 days"], ["today", "Today"], ["next7", "Next 7 days"]].map(([k, lab]) => `${lab}: ${ccRating(f, k)?.name || "-"}`)], [],
     ["", ...cols.map(c => c.group)], ["Percentile", ...head]];
   C.rows.forEach((lab, i) => L.push([ccRowName(lab), ...cols.map(c => F.table[c.k] ? F.table[c.k][i] : "")]));
@@ -2261,20 +2270,21 @@ function hpKeyHtml() {
     return `<div class="cc-key"><div class="t">${esc(`Legend: ${f.name} ${lab} rating thresholds`)}</div><div class="bar">${CLASSES.map((c, i) =>
       `<span style="background:${c.color}"><b>${esc(c.name)}</b>${lab} ${i === 0 ? `≤ ${lim[0]}` : i < lim.length ? `> ${lim[i - 1]} – ${lim[i]}` : `> ${lim[lim.length - 1]}`}</span>`).join("")}</div></div>`;
   }
-  if (f) return ccKeyHtml(false, f);
-  return ccKeyHtml(false) + `<div class="cc-pending">Each FDRA is colored with its own percentile ranges, taken from its rating thresholds. Select one FDRA in the FDRA filter, or open its Climate Card, to see its ranges.</div>`;
+  if (f) return ccKeyHtml(false, f) + `<div class="cc-pending">${esc(otherNote(f))}</div>`;
+  const own = Object.entries((META.other_pct || {}).zones || {}).filter(([z, r]) => JSON.stringify(r) !== JSON.stringify(otherRanges(null)));
+  return ccKeyHtml(false) + `<div class="cc-pending">ERC and BI use each FDRA's locally calculated breakpoints where it has them. All other indices use the general breakpoints shown above${own.length ? `; ${own.map(([z, r]) => `${esc(zoneLabel(z))} uses its own ranges (${CLASSES.map((c, i) => `${esc(c.name)} ${ccOrd(r[i][0])}–${ccOrd(r[i][1])}`).join(", ")})`).join("; ")}` : ""}. Select one FDRA to see its breakpoints.</div>`;
 }
 function pctNotes(col) {
   const per = ccPeriod(CLIMATE);
   if (pctOv.view === "rank") return `<div class="cc-notes"><div class="t">Notes</div><ul>
     <li>Each cell shows the FDRA value (average of its reporting stations) and, below it, its percentile rank in the ${per} record.</li>
     <li>Ranks are in fire danger order: for fuel moisture, relative humidity and GSI, a low value ranks high.</li>
-    <li>ERC and BI are colored by each FDRA's rating thresholds. All other columns are colored by each FDRA's own percentile ranges, taken from its ERC thresholds.</li>
+    <li>ERC and BI are colored by each FDRA's locally calculated breakpoints where it has them. All other indices are colored by the general breakpoints shown in the legend.</li>
     <li><b>Calculated Rating</b> is calculated from FEMS data with each FDRA's rating calculation, the same as the main outlook table. It is not the Official Rating set by FDRA leaders.</li></ul></div>`;
   return `<div class="cc-notes"><div class="t">Notes</div><ul>
     <li>Each column shows the value reached on that percentage of days in ${per}, from daily values averaged across each FDRA's reporting stations.</li>
     ${col.inv ? `<li>For ${esc(col.label)}, lower values indicate higher fire danger, so the columns are ordered by fire danger: the 90th column shows the value that only 10% of days were at or below.</li>` : ""}
-    ${col.k === "erc" || col.k === "bi" ? `<li>${esc(col.label)} is colored by each FDRA's rating thresholds.</li>` : `<li>Each FDRA's row is colored by its own percentile ranges, taken from its ERC thresholds.</li>`}</ul></div>`;
+    ${col.k === "erc" || col.k === "bi" ? `<li>${esc(col.label)} is colored by each FDRA's locally calculated breakpoints where it has them, otherwise by the general breakpoints shown in the legend.</li>` : `<li>${esc(col.label)} is colored by the general breakpoints shown in the legend.</li>`}</ul></div>`;
 }
 function hpTitle() {
   return pctOv.view === "rank" ? `Current Percentile Rank · ${hpDayLabel()}` : `Historical Percentiles (${ccPeriod(CLIMATE)}) · ${pctColName(pctCol())}`;
@@ -2520,7 +2530,7 @@ function svgChart(box, f, d, k) {
     const r = svg.getBoundingClientRect(), cx = (ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left;
     let best = null, bd = 1e9; pts.forEach(p => { const dd = Math.abs(tx(p.d) - cx); if (dd < bd) { bd = dd; best = p; } });
     if (!best || bd > 30) { xh.style.display = "none"; tip.hidden = true; return; }
-    const x = tx(best.d), c = classForPct(best.p);
+    const x = tx(best.d), c = idxClassForPct(f, k, best.p);
     xh.setAttribute("x1", x); xh.setAttribute("x2", x); xh.style.display = "";
     if (f.planner) {   // own method: date, ERC and BI with percentiles, and that day's fire danger from the planner's matrix
       const P = f.planner, fm = f.fuel_model || "Y", row = (best.f ? d.forecast : d.season || []).find(r => r.d === best.d) || {};
@@ -2531,7 +2541,7 @@ function svgChart(box, f, d, k) {
         const seq = [...(d.season || []), ...(d.forecast || []).filter(r => r.d > lastObs)].filter(r => r.d <= best.d).slice(-P.window);
         const mean = k => { const xs = seq.map(r => r[k]).filter(x => x != null); return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null; };
         re = mean("erc"); rb = mean("bi");
-        avgLine = `<br>${P.window}-day avg ERC-${fm} <b>${fmtNum(re, 1)}</b>${P.bi ? ` · BI-${fm} <b>${fmtNum(rb, 1)}</b>` : ""}`;
+        avgLine = `<br>${P.window}-day average ERC-${fm} <b>${fmtNum(re, 1)}</b>${P.bi ? ` · BI-${fm} <b>${fmtNum(rb, 1)}</b>` : ""}`;
       }
       const ec = cls(re, P.erc), bc = P.bi ? cls(rb, P.bi) : null;
       const fdc = P.grid ? (ec != null && bc != null ? CLASSES[P.grid[bc][ec]] : null) : ec != null ? CLASSES[ec] : null;
