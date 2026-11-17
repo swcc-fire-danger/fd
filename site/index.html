@@ -540,6 +540,10 @@ figure.chart figcaption{font-size:14.5px;margin-bottom:4px}
 .ctip{position:absolute;pointer-events:none;background:#1b1a17;color:#fff;font-size:12.5px;padding:6px 9px;border-radius:6px;white-space:nowrap;line-height:1.45}
 .ctip .tsw{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 3px 0 6px;vertical-align:-1px}
 .seg{gap:0!important}
+.avg-sw{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin:0 0 8px;font-size:12.5px;color:var(--ink-3)}
+.avg-sw .seg{display:inline-flex}.avg-sw .seg button{padding:3px 10px;font-size:12.5px;color:var(--ink)}
+.avg-sw .seg button[aria-pressed="true"]{color:var(--bg)}
+h4.ol-h{display:flex;align-items:center;justify-content:space-between;gap:8px}h4.ol-h .avg-sw{margin:0;text-transform:none;letter-spacing:0;font-weight:400}
 .seg button{border:1px solid var(--line-strong);background:var(--surface);padding:5px 12px;font-size:13px;cursor:pointer}
 .seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0;border-left:none}
 .seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
@@ -1277,6 +1281,7 @@ async function startSession(tk) {
   auth.token = tk.token;
   const me = await arc(`${REST}/community/self`);
   auth.user = me.username; auth.name = me.fullName || me.username; auth.orgId = me.orgId;
+  auth.privs = Array.isArray(me.privileges) ? me.privileges : null;   // ArcGIS role privileges of the signed-in account
   let groups = me.groups;
   if (!groups) groups = (await arc(`${REST}/community/users/${encodeURIComponent(me.username)}`)).groups || [];
   const gids = groups.map(g => g.id);
@@ -1644,7 +1649,7 @@ function reportTable(f) {
   const rows = f.zoneAvg ? f.report : rowsOf(f), NEW = !!(P || f.zoneAvg || f.detail_report);
   const fuels = cols.filter(c => c.group === "Fuels"), wx = cols.filter(c => c.group === "Weather");
   const idx = META.fire_danger_index.toUpperCase();
-  let h = `<div class="tbl-scroll"><table class="rep"><thead>
+  let h = `${avgSwitch()}<div class="tbl-scroll"><table class="rep"><thead>
     <tr class="grp"><th class="period" rowspan="2" style="background:var(--surface-2)"></th><th rowspan="2"></th>
       <th class="gsep" colspan="${fuels.length}">Fuels</th><th class="gsep" colspan="${wx.length}">Weather</th>
       <th class="gsep" rowspan="2" title="${P ? "Fire Danger Rating Matrix (" + P.label + ")" : META.fire_danger_method === "matrix" ? "Fire Danger Rating Matrix (VPD class × SFDI class)" : "Calculated from the " + idx + " percentile"}">Fire Danger<br><span style="font-weight:500;font-size:11.5px">(${esc(P ? P.label : f.zoneAvg ? "Zone average" : fdMethodLabel())})</span>${avgTag(P)}</th></tr>
@@ -1792,7 +1797,15 @@ function avgClass(idx) {
   const xs = idx.filter(i => i != null && i >= 0);
   return xs.length ? Math.floor(xs.reduce((a, b) => a + b + 1, 0) / xs.length + 0.5) - 1 : null;
 }
-function rowsOf(f) { return f.detail_report || f.report; }   // 7-row table (same rows as the FDRA and zone pages)
+// multi-day average shown in the last two rows (3, 5 or 7 days); 7 is in every report, 3 and 5 come from avg_rows
+let AVG_N = 7;
+try { AVG_N = [3, 5, 7].includes(+localStorage.getItem("fdo_avg")) ? +localStorage.getItem("fdo_avg") : 7; } catch (e) {}
+function rowsOf(f) {   // 7-row table (same rows as the FDRA and zone pages)
+  const R = f.detail_report || f.report, alt = AVG_N !== 7 && f.avg_rows && f.avg_rows[AVG_N];
+  return alt ? R.map(r => r.label === "7-Day Observed" ? alt[0] : r.label === "7-Day Forecast" ? alt[1] : r) : R;
+}
+const avgSwitch = () => !META.fdras.some(f => f.avg_rows) ? "" : `<div class="avg-sw"><span>Multi-day average</span><div class="seg" role="group" aria-label="Multi-day average">${[3, 5, 7].map(n =>
+  `<button type="button" data-avgn="${n}" aria-pressed="${AVG_N === n}">${n}-day</button>`).join("")}</div></div>`;
 /* Zone numbers = average of its FDRAs (each FDRA's percentile is against its own history) */
 function zoneReport(z) {
   const list = BY_ZONE[z].filter(f => !f.noData);
@@ -1970,7 +1983,7 @@ function ccClass(f, k, v, dangerPct) {
 /* the calculated rating from FEMS data (same calculation as the main outlook table) */
 function ccRating(f, which) {
   const lab = {past7: "7-Day Observed", today: "Today", next7: "7-Day Forecast"}[which];
-  const row = (rowsOf(f) || []).find(r => r.label === lab);
+  const row = (f.detail_report || f.report || []).find(r => r.label === lab);
   return row ? fdOf(row.values).cls : null;
 }
 const ccMethodName = f => f.planner ? (f.planner.grid ? `ERC-${f.fuel_model} × BI-${f.fuel_model} rating matrix` : `ERC-${f.fuel_model} rating thresholds`) + avgTag(f.planner) : "the standard calculation";
@@ -2606,7 +2619,7 @@ function fdraSummary(f) {
   const hist = `<div id="histCmp" class="muted" style="font-size:12.5px">Loading…</div>`;
   return `<h4>FDRA Percentiles · ${esc(mdy(panelDay === "obs" ? META.latest_obs_date : META.today))}</h4><div class="pbars">${bars}</div>
     <div class="footnote">Percentiles against this FDRA's ${esc(yearsOf(f))} record.${W ? ` ${esc(label("erc"))}${P.bi ? " and " + esc(label("bi")) : ""} are ${W}-day averages, ranked against ${W}-day averages.` : ""}${P ? ` ${esc(label("erc"))}${P.bi ? " and " + esc(label("bi")) : ""} colors follow this FDRA's adopted thresholds.` : ""} 100HR, 1000HR and GSI percentiles indicate dryness.</div>
-    <h4>Outlook</h4><div class="olrow">${outlook}</div>
+    <h4 class="ol-h">Outlook${avgSwitch()}</h4><div class="olrow">${outlook}</div>
     <h4>Compared with History</h4>${hist}`;
 }
 async function fillHistory(f) {
@@ -2811,6 +2824,12 @@ async function openStation(id) {
 document.addEventListener("click", e => {
   const rb = e.target.closest("[data-range]");
   if (rb) { chartRange = rb.dataset.range; document.querySelectorAll("[data-range]").forEach(b => b.setAttribute("aria-pressed", b === rb)); const f = FDRA[state.fdra]; if (f && CHART_CACHE[f.slug]) drawCharts(f, CHART_CACHE[f.slug]); return; }
+  const ab = e.target.closest("[data-avgn]");
+  if (ab) { AVG_N = +ab.dataset.avgn; try { localStorage.setItem("fdo_avg", AVG_N); } catch (er) {}
+    const y = window.scrollY, dr = $("#drawer"), dy = dr.scrollTop, open = dr.classList.contains("show");
+    renderView(); window.scrollTo(0, y);
+    if (open) { openPanelForState(); dr.scrollTop = dy; }
+    return; }
   const nb = e.target.closest("[data-note]");
   if (nb) { e.stopPropagation(); return openNote(nb.dataset.note); }
   const t = e.target.closest("[data-overview],[data-zonetab],[data-zone],[data-fdra],[data-station],[data-edit]");
@@ -2998,6 +3017,14 @@ async function promoteRetry(id, user) {
   }
 }
 let groupFails = new Map();   // username -> ArcGIS reason, from the last attempt
+// ArcGIS lets an account manage groups (and so add people) only if its role can create groups
+const canGroupAdmin = () => isRoot(ME()) || !auth.privs || auth.privs.some(p => p === "portal:user:createGroup" || p.startsWith("portal:admin:"));
+// the manager role as ArcGIS actually has it: a manager access whose account ArcGIS kept as a group member shows "Member"
+function arcMember(g) {
+  const k = g.base === "Admin" ? "admins" : "leaders", m = MEMBERS && MEMBERS[k];
+  const t = m && m.get(norm(g.user))?.type;
+  return t === "member";
+}
 // ArcGIS refused the manager role because of the person's account role: they stay a member (ratings still work)
 const acctLimited = u => /privileges to be a group admin/i.test(groupFails.get(norm(u)) || "");
 function ratingScopeText(p) {
@@ -3070,7 +3097,10 @@ async function openAccess() {
   $("main.wrap").hidden = true; $("#histPage").hidden = true; $("#accessPage").hidden = false; $("#drawer").classList.remove("show");
   try { history.replaceState(null, "", "#access"); } catch (e) {}
   window.scrollTo(0, 0);
-  $("#accSub").textContent = isAdminMgr(ME()) ? "You can give any access in the Southwest, including managers."
+  const ro = !canGroupAdmin();
+  $("#accAdd").hidden = ro;
+  $("#accSub").textContent = ro ? "You can view this list. Your ArcGIS account can't add, edit or remove people; a NIFC ArcGIS administrator can change the account's role."
+    : isAdminMgr(ME()) ? "You can give any access in the Southwest, including managers."
     : isAdminU(ME()) ? "You can add viewers and leaders in any zone."
     : `You can add viewers and FDRA leaders for ${myZones().length ? myZones().map(zoneLabel).join(", ") : myFdras().join(", ")}.`;
   accPaintFilters(); accPage = 1;
@@ -3117,7 +3147,8 @@ function chipHtml(g) {
   const cls = g.base === "Admin" ? "adm" : VIEW_LEVELS.includes(g.base) ? "view" : "ldr";
   const can = false;   // access is changed with Edit current access or Remove, not from the chips
   const k = encodeURIComponent(JSON.stringify([g.user, g.base, g.zone || "", g.fdra || ""]));
-  return `<span class="acc-chip ${cls}${can ? "" : " ro"}" title="Added by ${esc(leaderName(g.by))}${g.at ? " · " + esc(new Date(g.at).toLocaleDateString("en-US")) : ""}">${esc(roleLabel(g))}${g.manager && g.base !== "Admin" ? `<span class="m">Manager</span>` : ""}${can ? `<button type="button" title="Remove this access" data-accrm="${k}">×</button>` : ""}</span>`;
+  const mem = g.manager && g.base !== "Admin" && arcMember(g);
+  return `<span class="acc-chip ${cls}${can ? "" : " ro"}" title="Added by ${esc(leaderName(g.by))}${g.at ? " · " + esc(new Date(g.at).toLocaleDateString("en-US")) : ""}${mem ? " · Given manager access; ArcGIS allows this account only as a group member" : ""}">${esc(roleLabel(g))}${g.manager && g.base !== "Admin" ? `<span class="m">${mem ? "Member" : "Manager"}</span>` : ""}${can ? `<button type="button" title="Remove this access" data-accrm="${k}">×</button>` : ""}</span>`;
 }
 function accFiltered() {
   const q = norm($("#accQ").value), fr = $("#accFRole").value, fz = $("#accFZone").value, ff = $("#accFFdra").value, fm = $("#accFMgr").checked;
@@ -3175,7 +3206,7 @@ function accRender() {
         <span><b>Can't:</b> add, edit or remove people (ArcGIS does not allow this account to be a group manager).</span>
         <span><b>To fix:</b> a NIFC ArcGIS administrator changes the account's role. This page then completes the manager role automatically.</span></div>` : ""}</div>
       <div class="chips">${isRoot(p.user) ? `<span class="acc-chip adm ro">Owner<span class="m">Manager</span></span>` : ""}${gs.map(chipHtml).join("") || (isRoot(p.user) ? "" : `<span class="acc-chip view ro">${p.guest ? "Guest" : "User"} · added in ArcGIS</span>`)}</div>
-      <div class="acts">${accActs(p, gs, anyRm)}</div></div>`;
+      <div class="acts">${canGroupAdmin() ? accActs(p, gs, anyRm) : ""}</div></div>`;
   }).join("") || `<div class="acc-empty">No one matches these filters.</div>`;
   $("#accPager").innerHTML = pages > 1 ? `<button class="acc-sm" data-accpage="${accPage - 1}" ${accPage === 1 ? "disabled" : ""}>‹ Previous</button><span>Page ${accPage} of ${pages}</span><button class="acc-sm" data-accpage="${accPage + 1}" ${accPage === pages ? "disabled" : ""}>Next ›</button>` : "";
 }
@@ -3233,7 +3264,7 @@ function accPaintForm() {
   const ownerLocked = !!(F.person && !F.edit && isRoot(F.person.user) && !isRoot(ME()));
   const canEdit = !!(has.length && (isRoot(F.person.user) ? isRoot(ME()) : has.every(g => mayChange(ME(), g, true))));
   F.blocked = ownerLocked || canEdit;
-  const chips = has.map(g => `<span class="acc-chip ${g.base === "Admin" ? "adm" : VIEW_LEVELS.includes(g.base) ? "view" : "ldr"} ro">${esc(roleLabel(g))}${g.manager && g.base !== "Admin" ? `<span class="m">Manager</span>` : ""}</span>`).join("");
+  const chips = has.map(g => `<span class="acc-chip ${g.base === "Admin" ? "adm" : VIEW_LEVELS.includes(g.base) ? "view" : "ldr"} ro">${esc(roleLabel(g))}${g.manager && g.base !== "Admin" ? `<span class="m">${arcMember(g) ? "Member" : "Manager"}</span>` : ""}</span>`).join("");
   $("#accHas").hidden = !(ownerLocked || has.length);
   $("#accHas").innerHTML = ownerLocked ? "<b>This is the site owner.</b> Only the owner can change this access."
     : canEdit ? `<b>${esc(cleanName(F.person.name))} already has access:</b><div>${chips}</div><button class="btn primary" type="button" data-accswitch="1">Edit current access</button>`
